@@ -213,6 +213,28 @@
   justify-content: space-between;
   align-items: center;
   margin-bottom: 12px;
+  gap: 16px;
+  flex-wrap: wrap;
+}
+
+.slider-title-group {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.slider-label {
+  font-size: 14px;
+  font-weight: 700;
+  color: #f1f5f9;
+  cursor: pointer;
+}
+
+.slider-label-hint {
+  font-size: 12px;
+  color: #94a3b8;
+  font-weight: 400;
 }
 
 .slider-val-badge {
@@ -330,6 +352,19 @@
   font-weight: 500;
 }
 
+.distance-card-buffer-badge {
+  display: inline-block;
+  font-size: 11px;
+  font-weight: 600;
+  color: #38bdf8;
+  background-color: rgba(56, 189, 248, 0.12);
+  border: 1px solid rgba(56, 189, 248, 0.28);
+  padding: 2px 8px;
+  border-radius: 9999px;
+  margin-top: 6px;
+  letter-spacing: 0.02em;
+}
+
 /* Results Section */
 .results-container {
   background-color: #0b1329;
@@ -371,7 +406,7 @@
 /* Calculated Performance Operation Tabs */
 .results-tabs-bar {
   display: grid;
-  grid-template-columns: 1fr 1fr;
+  grid-template-columns: 1fr 1fr 1fr;
   gap: 8px;
   background-color: #0f172a;
   padding: 4px;
@@ -522,6 +557,83 @@
 
 .distance-card-value.obstacle-50ft {
   color: #34d399;
+}
+
+/* Climb card value colours */
+.distance-card-value.climb-roc {
+  color: #a78bfa; /* violet */
+}
+
+.distance-card-value.climb-gradient {
+  color: #f472b6; /* pink */
+}
+
+.distance-card-value.climb-speeds {
+  color: #fb923c; /* orange */
+}
+
+.distance-card-value.climb-ceiling {
+  color: #facc15; /* amber */
+}
+
+/* 4-column grid for climb cards */
+.climb-cards-grid {
+  grid-template-columns: repeat(4, 1fr);
+}
+
+@media (max-width: 860px) {
+  .climb-cards-grid {
+    grid-template-columns: repeat(2, 1fr);
+  }
+}
+
+/* 3-column grid for climb profile cards (Time, Distance, Fuel) */
+.climb-profile-cards-grid {
+  grid-template-columns: repeat(3, 1fr);
+}
+
+@media (max-width: 860px) {
+  .climb-profile-cards-grid {
+    grid-template-columns: 1fr;
+  }
+}
+
+/* TAS / GS info row below climb cards */
+/* Climb gradient calculation detail row */
+.climb-calc-detail {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 12px;
+  padding: 8px 12px;
+  background: #0f172a;
+  border: 1px solid #1e293b;
+  border-radius: 8px;
+  font-size: 12px;
+  color: #64748b;
+}
+
+.climb-calc-detail-label {
+  color: #475569;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  font-size: 11px;
+  margin-right: 4px;
+}
+
+.climb-calc-detail-item {
+  color: #64748b;
+}
+
+.climb-calc-detail-item strong {
+  color: #94a3b8;
+  font-weight: 600;
+}
+
+.climb-calc-detail-sep {
+  color: #334155;
 }
 
 .distance-card-unit {
@@ -741,5 +853,11 @@
   .form-grid,
   .distance-cards-grid {
     grid-template-columns: 1fr;
+  }
+
+  .slider-title-group {
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 3px;
   }
 }

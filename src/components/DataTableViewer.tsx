@@ -1,35 +1,52 @@
-import React, { useState } from 'react';
-import type { POHDataset } from '../engine/types';
+import React, { useState, useMemo } from 'react';
+import type { PerformanceTable } from '../engine/types';
 
 interface DataTableViewerProps {
-  dataset: POHDataset;
-  alternateDataset?: POHDataset;
-  datasetLabel?: string;
-  alternateDatasetLabel?: string;
+  tables: PerformanceTable[];
   currentWeight: number;
   currentAltitude: number;
   currentTempC: number;
 }
 
 export const DataTableViewer: React.FC<DataTableViewerProps> = ({
-  dataset,
-  alternateDataset,
-  datasetLabel = 'Flaps Up (0°)',
-  alternateDatasetLabel = '25° Flaps',
+  tables,
   currentWeight,
   currentAltitude,
   currentTempC,
 }) => {
   const [isOpen, setIsOpen] = useState(false);
-  const [activeDatasetIndex, setActiveDatasetIndex] = useState<number>(0);
 
-  const activeDataset = activeDatasetIndex === 1 && alternateDataset ? alternateDataset : dataset;
+  // Get all unique configurations
+  const configs = useMemo(() => {
+    const c = new Set<string>();
+    tables.forEach(t => c.add(t.configuration));
+    return Array.from(c);
+  }, [tables]);
+
+  const [activeConfigIndex, setActiveConfigIndex] = useState<number>(0);
+
+  // Active tables for the selected config
+  const activeConfig = configs[activeConfigIndex] || configs[0];
+  const activeTables = useMemo(() => tables.filter(t => t.configuration === activeConfig), [tables, activeConfig]);
+
+  const hasRoll = activeTables.some(t => t.metric === 'groundRoll');
+  const hasClearance = activeTables.some(t => t.metric === 'clearance50ft');
+  const hasClimb = activeTables.some(t => t.metric === 'rateOfClimb');
+
+  const [metricView, setMetricView] = useState<'roll' | 'clearance'>('roll');
+
+  const activeTable = useMemo(() => {
+    if (hasClimb) return activeTables.find(t => t.metric === 'rateOfClimb') || activeTables[0];
+    if (metricView === 'roll' && hasRoll) return activeTables.find(t => t.metric === 'groundRoll') || activeTables[0];
+    if (metricView === 'clearance' && hasClearance) return activeTables.find(t => t.metric === 'clearance50ft') || activeTables[0];
+    return activeTables[0];
+  }, [activeTables, hasClimb, metricView, hasRoll, hasClearance]);
 
   const [selectedWeightIndex, setSelectedWeightIndex] = useState<number>(() => {
-    // Default to the closest discrete weight in the dataset
+    if (!activeTable) return 0;
     let closestIdx = 0;
-    let minDiff = Math.abs(activeDataset.weights[0] - currentWeight);
-    activeDataset.weights.forEach((w, idx) => {
+    let minDiff = Math.abs(activeTable.weights[0] - currentWeight);
+    activeTable.weights.forEach((w, idx) => {
       const diff = Math.abs(w - currentWeight);
       if (diff < minDiff) {
         minDiff = diff;
@@ -39,10 +56,9 @@ export const DataTableViewer: React.FC<DataTableViewerProps> = ({
     return closestIdx;
   });
 
-  const [metricView, setMetricView] = useState<'roll' | 'clearance'>('roll');
-
   // Find bounding indices for highlighting
   const findBounds = (arr: number[], val: number) => {
+    if (!arr || arr.length === 0) return [0, 0];
     if (isNaN(val)) return [-1, -1];
     if (val <= arr[0]) return [0, 0];
     if (val >= arr[arr.length - 1]) return [arr.length - 1, arr.length - 1];
@@ -54,8 +70,10 @@ export const DataTableViewer: React.FC<DataTableViewerProps> = ({
     return [0, 0];
   };
 
-  const altBounds = findBounds(activeDataset.altitudes, currentAltitude);
-  const tempBounds = findBounds(activeDataset.temperatures, currentTempC);
+  const altBounds = activeTable ? findBounds(activeTable.altitudes, currentAltitude) : [0, 0];
+  const tempBounds = activeTable ? findBounds(activeTable.temperatures, currentTempC) : [0, 0];
+
+  if (!tables || tables.length === 0) return null;
 
   return (
     <div className="data-tables-wrapper">
@@ -69,55 +87,65 @@ export const DataTableViewer: React.FC<DataTableViewerProps> = ({
         </button>
       </div>
 
-      {isOpen && (
+      {isOpen && activeTable && (
         <div className="data-tables-panel">
           <div className="data-tables-header">
             <div>
               <h3 style={{ color: '#f8fafc', fontSize: '16px', fontWeight: 700 }}>
-                {activeDataset.aircraft} &ndash; {activeDataset.operation === 'takeoff' ? 'Take-Off' : 'Landing'} Baseline POH Table
+                {activeTable.label}
               </h3>
               <p style={{ color: '#94a3b8', fontSize: '12px', marginTop: '2px' }}>
-                Zero wind, paved, level, dry runway baseline values directly from POH Section 5.
+                {hasClimb
+                  ? 'Zero wind, flaps up, full throttle climb rate directly from POH.'
+                  : 'Zero wind, paved, level, dry runway baseline values directly from POH.'}
               </p>
             </div>
 
             {/* Metric & Flap View Toggles */}
             <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap', alignItems: 'center' }}>
-              {alternateDataset && (
+              {configs.length > 1 && (
                 <div className="mini-toggle-group">
-                  <button
-                    type="button"
-                    className={`mini-toggle-btn ${activeDatasetIndex === 0 ? 'active' : ''}`}
-                    onClick={() => setActiveDatasetIndex(0)}
-                  >
-                    {datasetLabel}
-                  </button>
-                  <button
-                    type="button"
-                    className={`mini-toggle-btn ${activeDatasetIndex === 1 ? 'active' : ''}`}
-                    onClick={() => setActiveDatasetIndex(1)}
-                  >
-                    {alternateDatasetLabel}
-                  </button>
+                  {configs.map((cfg, idx) => (
+                    <button
+                      key={cfg}
+                      type="button"
+                      className={`mini-toggle-btn ${activeConfigIndex === idx ? 'active' : ''}`}
+                      onClick={() => setActiveConfigIndex(idx)}
+                    >
+                      {cfg}
+                    </button>
+                  ))}
                 </div>
               )}
 
-              <div className="mini-toggle-group">
-                <button
-                  type="button"
-                  className={`mini-toggle-btn ${metricView === 'roll' ? 'active' : ''}`}
-                  onClick={() => setMetricView('roll')}
-                >
-                  Ground Roll
-                </button>
-                <button
-                  type="button"
-                  className={`mini-toggle-btn ${metricView === 'clearance' ? 'active' : ''}`}
-                  onClick={() => setMetricView('clearance')}
-                >
-                  50ft Obstacle
-                </button>
-              </div>
+              {hasClimb ? (
+                <div className="mini-toggle-group">
+                  <button type="button" className="mini-toggle-btn active" style={{ cursor: 'default' }}>
+                    Rate of Climb (FPM)
+                  </button>
+                </div>
+              ) : (
+                <div className="mini-toggle-group">
+                  {hasRoll && (
+                    <button
+                      type="button"
+                      className={`mini-toggle-btn ${metricView === 'roll' ? 'active' : ''}`}
+                      onClick={() => setMetricView('roll')}
+                    >
+                      Ground Roll
+                    </button>
+                  )}
+                  {hasClearance && (
+                    <button
+                      type="button"
+                      className={`mini-toggle-btn ${metricView === 'clearance' ? 'active' : ''}`}
+                      onClick={() => setMetricView('clearance')}
+                    >
+                      50ft Obstacle
+                    </button>
+                  )}
+                </div>
+              )}
             </div>
           </div>
 
@@ -126,7 +154,7 @@ export const DataTableViewer: React.FC<DataTableViewerProps> = ({
             <span style={{ fontSize: '13px', fontWeight: 600, color: '#94a3b8', alignSelf: 'center', marginRight: '8px' }}>
               Gross Weight:
             </span>
-            {activeDataset.weights.map((w, idx) => (
+            {activeTable.weights.map((w, idx) => (
               <button
                 key={w}
                 type="button"
@@ -149,7 +177,7 @@ export const DataTableViewer: React.FC<DataTableViewerProps> = ({
                   <th style={{ minWidth: '130px' }}>
                     Press Alt \ Temp
                   </th>
-                  {activeDataset.temperatures.map((tempC, tIdx) => {
+                  {activeTable.temperatures.map((tempC, tIdx) => {
                     const tempF = Math.round((tempC * 9) / 5 + 32);
                     const isColHighlighted = tIdx === tempBounds[0] || tIdx === tempBounds[1];
                     return (
@@ -167,7 +195,7 @@ export const DataTableViewer: React.FC<DataTableViewerProps> = ({
                 </tr>
               </thead>
               <tbody>
-                {activeDataset.altitudes.map((alt, aIdx) => {
+                {activeTable.altitudes.map((alt, aIdx) => {
                   const isRowHighlighted = aIdx === altBounds[0] || aIdx === altBounds[1];
                   return (
                     <tr
@@ -177,9 +205,8 @@ export const DataTableViewer: React.FC<DataTableViewerProps> = ({
                       <td className="alt-cell">
                         <strong>{alt.toLocaleString()} ft</strong>
                       </td>
-                      {activeDataset.temperatures.map((_, tIdx) => {
-                        const roll = activeDataset.data.groundRoll[selectedWeightIndex]?.[aIdx]?.[tIdx] ?? 0;
-                        const clearance = activeDataset.data.clearance50ft[selectedWeightIndex]?.[aIdx]?.[tIdx] ?? 0;
+                      {activeTable.temperatures.map((_, tIdx) => {
+                        const val = activeTable.data?.[selectedWeightIndex]?.[aIdx]?.[tIdx] ?? 0;
                         const isInterpolationBoundingCell =
                           isRowHighlighted && (tIdx === tempBounds[0] || tIdx === tempBounds[1]);
 
@@ -188,10 +215,12 @@ export const DataTableViewer: React.FC<DataTableViewerProps> = ({
                             key={tIdx}
                             className={`data-cell ${isInterpolationBoundingCell ? 'active-interpolating-cell' : ''}`}
                           >
-                            {metricView === 'roll' ? (
-                              <span className="cell-roll">{roll.toLocaleString()} ft</span>
+                            {hasClimb ? (
+                              <span className="cell-roc">{val.toLocaleString()} FPM</span>
+                            ) : activeTable.metric === 'groundRoll' ? (
+                              <span className="cell-roll">{val.toLocaleString()} ft</span>
                             ) : (
-                              <span className="cell-clearance">{clearance.toLocaleString()} ft</span>
+                              <span className="cell-clearance">{val.toLocaleString()} ft</span>
                             )}
                           </td>
                         );
@@ -212,12 +241,12 @@ export const DataTableViewer: React.FC<DataTableViewerProps> = ({
                     width: '12px',
                     height: '12px',
                     borderRadius: '3px',
-                    backgroundColor: metricView === 'roll' ? '#38bdf8' : '#34d399',
+                    backgroundColor: activeTable.metric === 'groundRoll' ? '#38bdf8' : '#34d399',
                     display: 'inline-block',
                   }}
                 ></span>
                 <span style={{ color: '#cbd5e1' }}>
-                  {metricView === 'roll' ? 'Ground Roll Distance (ft)' : 'Total Distance to Clear 50ft Obstacle (ft)'}
+                  {activeTable.metric === 'groundRoll' ? 'Ground Roll Distance (ft)' : 'Total Distance to Clear 50ft Obstacle (ft)'}
                 </span>
               </div>
               <div style={{ display: 'flex', alignItems: 'center', gap: '6px', fontSize: '12px' }}>

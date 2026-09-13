@@ -1,18 +1,17 @@
 export interface SavedAppState {
   aircraft: 'C172N' | 'Archer2';
-  operation: 'takeoff' | 'landing';
+  operation: 'takeoff' | 'climb' | 'landing';
   archerFlaps?: '0' | '25';
   surfacePaved: boolean;
   weight: number;
-  useAltCalc: boolean;
   fieldElev: number;
   altimeterSetting: number;
-  manualPressureAlt: number;
   temperature: number;
   tempUnit: 'C' | 'F';
   windKnots: number;
   isHeadwind: boolean;
   safetyBuffer: number;
+  cruiseAltitude: number;
 }
 
 export const DEFAULT_APP_STATE: SavedAppState = {
@@ -21,10 +20,9 @@ export const DEFAULT_APP_STATE: SavedAppState = {
   archerFlaps: '0',
   surfacePaved: true,
   weight: 2300,
-  useAltCalc: false,
   fieldElev: 1000,
   altimeterSetting: 29.92,
-  manualPressureAlt: 2000,
+  cruiseAltitude: 5500,
   temperature: 25,
   tempUnit: 'C',
   windKnots: 0,
@@ -50,14 +48,16 @@ export function loadSavedState(): SavedAppState {
 
     return {
       aircraft: parsed.aircraft === 'Archer2' ? 'Archer2' : 'C172N',
-      operation: parsed.operation === 'landing' ? 'landing' : 'takeoff',
+      operation:
+        parsed.operation === 'climb' || parsed.operation === 'landing'
+          ? parsed.operation
+          : 'takeoff',
       archerFlaps: parsed.archerFlaps === '25' ? '25' : '0',
       surfacePaved: typeof parsed.surfacePaved === 'boolean' ? parsed.surfacePaved : true,
       weight:
         typeof parsed.weight === 'number' && Number.isFinite(parsed.weight) && parsed.weight > 0
           ? parsed.weight
           : DEFAULT_APP_STATE.weight,
-      useAltCalc: typeof parsed.useAltCalc === 'boolean' ? parsed.useAltCalc : false,
       fieldElev:
         typeof parsed.fieldElev === 'number' && Number.isFinite(parsed.fieldElev)
           ? parsed.fieldElev
@@ -69,10 +69,6 @@ export function loadSavedState(): SavedAppState {
         parsed.altimeterSetting <= 35
           ? parsed.altimeterSetting
           : DEFAULT_APP_STATE.altimeterSetting,
-      manualPressureAlt:
-        typeof parsed.manualPressureAlt === 'number' && Number.isFinite(parsed.manualPressureAlt)
-          ? parsed.manualPressureAlt
-          : DEFAULT_APP_STATE.manualPressureAlt,
       temperature:
         typeof parsed.temperature === 'number' && Number.isFinite(parsed.temperature)
           ? parsed.temperature
@@ -90,6 +86,10 @@ export function loadSavedState(): SavedAppState {
         parsed.safetyBuffer <= 100
           ? parsed.safetyBuffer
           : 0,
+      cruiseAltitude:
+        typeof parsed.cruiseAltitude === 'number' && Number.isFinite(parsed.cruiseAltitude)
+          ? parsed.cruiseAltitude
+          : DEFAULT_APP_STATE.cruiseAltitude,
     };
   } catch {
     return DEFAULT_APP_STATE;

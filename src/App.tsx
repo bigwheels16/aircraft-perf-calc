@@ -1,7 +1,9 @@
 import { useState, useMemo, useEffect } from 'react';
-import { c172nTakeoff, c172nLanding } from './data/c172n';
-import { archer2TakeoffFlaps0, archer2TakeoffFlaps25, archer2Landing } from './data/archer2';
-import { calculatePerformance } from './engine/performance';
+import { c172n } from './data/c172n';
+import { archer2 } from './data/archer2';
+import { calculateTable, calculateClimb } from './engine/performance';
+import type { PerformanceInput, TableResult, ClimbPerformanceResult } from './engine/performance';
+import type { PerformanceTable } from './engine/types';
 import { DataTableViewer } from './components/DataTableViewer';
 import { loadSavedState, saveAppState } from './utils/storage';
 import './App.css';
@@ -10,20 +12,19 @@ function App() {
   const [initialState] = useState(() => loadSavedState());
 
   const [aircraft, setAircraft] = useState<'C172N' | 'Archer2'>(initialState.aircraft);
-  const [operation, setOperation] = useState<'takeoff' | 'landing'>(initialState.operation);
+  const [operation, setOperation] = useState<'takeoff' | 'climb' | 'landing'>(initialState.operation);
   const [surfacePaved, setSurfacePaved] = useState<boolean>(initialState.surfacePaved);
 
   const [weight, setWeight] = useState<number>(initialState.weight);
-  const [useAltCalc, setUseAltCalc] = useState<boolean>(initialState.useAltCalc);
   const [fieldElev, setFieldElev] = useState<number>(initialState.fieldElev);
   const [altimeterSetting, setAltimeterSetting] = useState<number>(initialState.altimeterSetting);
-  const [manualPressureAlt, setManualPressureAlt] = useState<number>(initialState.manualPressureAlt);
 
   const [temperature, setTemperature] = useState<number>(initialState.temperature);
   const [tempUnit, setTempUnit] = useState<'C' | 'F'>(initialState.tempUnit);
   const [windKnots, setWindKnots] = useState<number>(initialState.windKnots);
   const [isHeadwind, setIsHeadwind] = useState<boolean>(initialState.isHeadwind);
   const [safetyBuffer, setSafetyBuffer] = useState<number>(initialState.safetyBuffer || 0);
+  const [cruiseAltitude, setCruiseAltitude] = useState<number>(initialState.cruiseAltitude ?? 5500);
 
   // Automatically persist user input values on change
   useEffect(() => {
@@ -32,10 +33,9 @@ function App() {
       operation,
       surfacePaved,
       weight,
-      useAltCalc,
       fieldElev,
       altimeterSetting,
-      manualPressureAlt,
+      cruiseAltitude,
       temperature,
       tempUnit,
       windKnots,
@@ -47,10 +47,9 @@ function App() {
     operation,
     surfacePaved,
     weight,
-    useAltCalc,
     fieldElev,
     altimeterSetting,
-    manualPressureAlt,
+    cruiseAltitude,
     temperature,
     tempUnit,
     windKnots,
@@ -58,36 +57,33 @@ function App() {
     safetyBuffer,
   ]);
 
-  const isArcherTakeoff = aircraft === 'Archer2' && operation === 'takeoff';
+  const aircraftData = useMemo(() => aircraft === 'C172N' ? c172n : archer2, [aircraft]);
 
-  // Compute active primary dataset (Flaps 0° for Archer II takeoff baseline)
-  const dataset = useMemo(() => {
-    if (aircraft === 'C172N') {
-      return operation === 'takeoff' ? c172nTakeoff : c172nLanding;
-    } else {
-      return operation === 'takeoff' ? archer2TakeoffFlaps0 : archer2Landing;
-    }
-  }, [aircraft, operation]);
+  // Compute active primary tables
+  const operationTables = useMemo(() => {
+    if (operation === 'climb') return aircraftData.climb.tables;
+    return operation === 'takeoff' ? aircraftData.takeoff : aircraftData.landing;
+  }, [aircraftData, operation]);
 
-  // Secondary dataset for Archer II takeoff (25° Flaps)
-  const secondaryDataset = useMemo(() => {
-    return isArcherTakeoff ? archer2TakeoffFlaps25 : undefined;
-  }, [isArcherTakeoff]);
-
-  const maxWeight = dataset.weights[dataset.weights.length - 1];
-  const minWeight = dataset.weights[0];
+  const maxWeight = aircraftData.maxWeight;
+  const minWeight = aircraftData.minWeight;
   const isWeightValid = !isNaN(weight) && weight >= minWeight && weight <= maxWeight;
 
-  // Compute Pressure Altitude
+  // Compute Departure Pressure Altitude: Field Elevation + (29.92 - Altimeter) * 1000
   const pressureAltitude = useMemo(() => {
-    if (useAltCalc) {
-      if (isNaN(fieldElev) || isNaN(altimeterSetting) || altimeterSetting < 26.0 || altimeterSetting > 32.0) {
-        return NaN;
-      }
-      return Math.round(fieldElev + (29.92 - altimeterSetting) * 1000);
+    if (isNaN(fieldElev) || isNaN(altimeterSetting) || altimeterSetting < 26.0 || altimeterSetting > 32.0) {
+      return NaN;
     }
-    return isNaN(manualPressureAlt) ? NaN : manualPressureAlt;
-  }, [useAltCalc, fieldElev, altimeterSetting, manualPressureAlt]);
+    return Math.round(fieldElev + (29.92 - altimeterSetting) * 1000);
+  }, [fieldElev, altimeterSetting]);
+
+  // Compute Cruise Pressure Altitude: Target Cruise Altitude + (29.92 - Altimeter) * 1000
+  const cruisePressureAltitude = useMemo(() => {
+    if (isNaN(cruiseAltitude) || isNaN(altimeterSetting) || altimeterSetting < 26.0 || altimeterSetting > 32.0) {
+      return NaN;
+    }
+    return Math.round(cruiseAltitude + (29.92 - altimeterSetting) * 1000);
+  }, [cruiseAltitude, altimeterSetting]);
 
   // Convert temperature to Celsius for engine calculation
   const tempInC = tempUnit === 'F' ? ((temperature - 32) * 5) / 9 : temperature;
@@ -126,19 +122,13 @@ function App() {
     }
 
     // Altitude validation
-    if (!useAltCalc) {
-      if (isNaN(manualPressureAlt)) {
-        errors.push('Pressure altitude is empty or not a valid number.');
-      }
-    } else {
-      if (isNaN(fieldElev)) {
-        errors.push('Field elevation is empty or not a valid number.');
-      }
-      if (isNaN(altimeterSetting)) {
-        errors.push('Altimeter setting (QNH) is empty or not a valid number.');
-      } else if (altimeterSetting < 26.0 || altimeterSetting > 32.0) {
-        errors.push(`Altimeter setting (${altimeterSetting.toFixed(2)} inHg) must be between 26.00 and 32.00 inHg.`);
-      }
+    if (isNaN(fieldElev)) {
+      errors.push('Field elevation is empty or not a valid number.');
+    }
+    if (isNaN(altimeterSetting)) {
+      errors.push('Altimeter setting (QNH) is empty or not a valid number.');
+    } else if (altimeterSetting < 26.0 || altimeterSetting > 32.0) {
+      errors.push(`Altimeter setting (${altimeterSetting.toFixed(2)} inHg) must be between 26.00 and 32.00 inHg.`);
     }
 
     // Temperature validation
@@ -155,81 +145,80 @@ function App() {
       errors.push('Runway wind component cannot be negative.');
     }
 
+    // Target cruise altitude validation (only applies when on climb tab)
+    if (operation === 'climb') {
+      if (isNaN(cruiseAltitude)) {
+        errors.push('Target cruise altitude is empty or not a valid number.');
+      } else if (!isNaN(fieldElev) && cruiseAltitude <= fieldElev) {
+        errors.push(`Target cruise altitude (${cruiseAltitude.toLocaleString()} ft) must be higher than field elevation (${fieldElev.toLocaleString()} ft).`);
+      }
+    }
+
     return errors;
   }, [
     weight,
     minWeight,
     maxWeight,
     aircraft,
-    useAltCalc,
-    manualPressureAlt,
     fieldElev,
     altimeterSetting,
+    cruiseAltitude,
+    operation,
     temperature,
     tempInC,
     windKnots,
   ]);
 
   // Run calculation if all inputs are valid for primary dataset
-  const performance = useMemo(() => {
+  const tableResults = useMemo(() => {
+    const results = new Map<string, TableResult | ClimbPerformanceResult>();
     if (validationErrors.length > 0 || isNaN(pressureAltitude)) {
-      return null;
+      return results;
     }
-    return calculatePerformance(
-      {
-        weight,
-        pressureAltitude,
-        temperature: tempInC,
-        windKnots: Math.max(0, windKnots),
-        isHeadwind,
-        surfacePaved,
-        safetyBufferPercent: safetyBuffer,
-      },
-      dataset
-    );
-  }, [validationErrors, pressureAltitude, weight, tempInC, windKnots, isHeadwind, surfacePaved, safetyBuffer, dataset]);
+    const input: PerformanceInput = {
+      weight,
+      pressureAltitude,
+      temperature: tempInC,
+      windKnots: Math.max(0, windKnots),
+      isHeadwind,
+      surfacePaved,
+      safetyBufferPercent: safetyBuffer,
+      cruiseAltitude: cruisePressureAltitude,
+    };
 
-  // Run calculation for Archer II 25° Flaps takeoff
-  const performanceFlaps25 = useMemo(() => {
-    if (!isArcherTakeoff || validationErrors.length > 0 || isNaN(pressureAltitude)) {
-      return null;
+    if (operation === 'climb') {
+      const result = calculateClimb(input, aircraftData.climb);
+      if (result) {
+        results.set(result.tableId, result);
+      }
+    } else {
+      operationTables.forEach(t => {
+        results.set(t.id, calculateTable(input, t));
+      });
     }
-    return calculatePerformance(
-      {
-        weight,
-        pressureAltitude,
-        temperature: tempInC,
-        windKnots: Math.max(0, windKnots),
-        isHeadwind,
-        surfacePaved,
-        safetyBufferPercent: safetyBuffer,
-      },
-      archer2TakeoffFlaps25
-    );
-  }, [isArcherTakeoff, validationErrors, pressureAltitude, weight, tempInC, windKnots, isHeadwind, surfacePaved, safetyBuffer]);
+    return results;
+  }, [validationErrors, pressureAltitude, cruisePressureAltitude, weight, tempInC, windKnots, isHeadwind, surfacePaved, safetyBuffer, operation, aircraftData, operationTables]);
 
-  // Combined operational warnings from both calculations
   const operationalWarnings = useMemo(() => {
     const warnings = new Set<string>();
-    if (performance) {
-      performance.warnings.forEach((w) => warnings.add(w));
-    }
-    if (performanceFlaps25) {
-      performanceFlaps25.warnings.forEach((w) => warnings.add(w));
-    }
+    tableResults.forEach(res => {
+      res.warnings.forEach(w => warnings.add(w));
+    });
     return Array.from(warnings);
-  }, [performance, performanceFlaps25]);
+  }, [tableResults]);
 
   // Density altitude (from performance calculation or calculated directly from PA and OAT)
   const currentDensityAltitude = useMemo(() => {
-    if (performance) return performance.densityAltitude;
-    if (performanceFlaps25) return performanceFlaps25.densityAltitude;
+    if (tableResults.size > 0) {
+      const firstRes = Array.from(tableResults.values())[0];
+      return firstRes.densityAltitude;
+    }
     if (!isNaN(pressureAltitude) && !isNaN(tempInC)) {
       const isaTemp = 15 - (pressureAltitude / 1000) * 2;
       return Math.round(pressureAltitude + 118.8 * (tempInC - isaTemp));
     }
     return null;
-  }, [performance, performanceFlaps25, pressureAltitude, tempInC]);
+  }, [tableResults, pressureAltitude, tempInC]);
 
   // High density altitude flag (DA > PA + 2,000 ft)
   const isHighDensityAltitude = useMemo(() => {
@@ -250,7 +239,7 @@ function App() {
   return (
     <div className="app-container">
       <header className="header">
-        <h1>Take-Off &amp; Landing Performance Calculator</h1>
+        <h1>Take-Off, Climb &amp; Landing Performance Calculator</h1>
         <p>POH Multi-Linear Interpolation &bull; 100% Client-Side Supplementary Flight Computer</p>
       </header>
 
@@ -379,102 +368,35 @@ function App() {
             )}
           </div>
 
-          {/* Altitude Input Mode */}
+          {/* Altimeter Setting */}
           <div className="form-field">
-            <div className="form-label">
-              <span>Altitude Mode</span>
-              <div className="mini-toggle-group">
-                <button
-                  type="button"
-                  className={`mini-toggle-btn ${!useAltCalc ? 'active' : ''}`}
-                  onClick={() => {
-                    if (useAltCalc) {
-                      if (!isNaN(pressureAltitude)) {
-                        setManualPressureAlt(pressureAltitude);
-                      }
-                      setUseAltCalc(false);
-                    }
-                  }}
-                >
-                  Pressure Alt
-                </button>
-                <button
-                  type="button"
-                  className={`mini-toggle-btn ${useAltCalc ? 'active' : ''}`}
-                  onClick={() => setUseAltCalc(true)}
-                >
-                  Elevation + QNH
-                </button>
-              </div>
-            </div>
-
-            {!useAltCalc ? (
-              <div>
-                <label className="sub-input-label" htmlFor="manual-pa-input">
-                  Pressure Altitude (ft)
-                </label>
-                <input
-                  id="manual-pa-input"
-                  type="number"
-                  step={100}
-                  placeholder="e.g. 2000"
-                  value={isNaN(manualPressureAlt) ? '' : manualPressureAlt}
-                  onChange={(e) => setManualPressureAlt(parseFloat(e.target.value))}
-                />
-                {isNaN(manualPressureAlt) && (
-                  <div className="field-error">Pressure altitude is required</div>
-                )}
-              </div>
-            ) : (
-              <div>
-                <div style={{ display: 'grid', gridTemplateColumns: '1.2fr 1fr', gap: '8px' }}>
-                  <div>
-                    <label className="sub-input-label" htmlFor="field-elev-input">
-                      Field Elevation (ft)
-                    </label>
-                    <input
-                      id="field-elev-input"
-                      type="number"
-                      step={100}
-                      placeholder="e.g. 1000"
-                      value={isNaN(fieldElev) ? '' : fieldElev}
-                      onChange={(e) => setFieldElev(parseFloat(e.target.value))}
-                    />
-                    {isNaN(fieldElev) && (
-                      <div className="field-error">Field elevation is required</div>
-                    )}
-                  </div>
-                  <div>
-                    <label className="sub-input-label" htmlFor="altimeter-input">
-                      Altimeter (inHg)
-                    </label>
-                    <input
-                      id="altimeter-input"
-                      type="number"
-                      step={0.01}
-                      placeholder="29.92"
-                      value={isNaN(altimeterSetting) ? '' : altimeterSetting}
-                      onChange={(e) => setAltimeterSetting(parseFloat(e.target.value))}
-                    />
-                    {isNaN(altimeterSetting) && (
-                      <div className="field-error">Altimeter setting is required</div>
-                    )}
-                    {!isNaN(altimeterSetting) && (altimeterSetting < 26.0 || altimeterSetting > 32.0) && (
-                      <div className="field-error">Must be 26.00 &ndash; 32.00 inHg</div>
-                    )}
-                  </div>
-                </div>
-              </div>
-            )}
+            <label className="form-label" htmlFor="altimeter-input">
+              <span>Altimeter Setting (inHg)</span>
+              <span className="form-label-hint">Standard: 29.92</span>
+            </label>
+            <input
+              id="altimeter-input"
+              type="number"
+              step={0.01}
+              placeholder="29.92"
+              value={isNaN(altimeterSetting) ? '' : altimeterSetting}
+              onChange={(e) => setAltimeterSetting(parseFloat(e.target.value))}
+            />
             <span className="form-label-hint" style={{ marginTop: '6px' }}>
-              Calculated Pressure Alt: <strong>{isNaN(pressureAltitude) ? '--' : `${pressureAltitude.toLocaleString()} ft`}</strong>
+              Pressure Altitude Correction: <strong>{!isNaN(altimeterSetting) ? `${((29.92 - altimeterSetting) * 1000 >= 0 ? '+' : '')}${Math.round((29.92 - altimeterSetting) * 1000)} ft` : '--'}</strong>
             </span>
+            {isNaN(altimeterSetting) && (
+              <div className="field-error">Altimeter setting is required</div>
+            )}
+            {!isNaN(altimeterSetting) && (altimeterSetting < 26.0 || altimeterSetting > 32.0) && (
+              <div className="field-error">Must be 26.00 &ndash; 32.00 inHg</div>
+            )}
           </div>
 
           {/* Wind Component */}
           <div className="form-field">
             <label className="form-label">
-              <span>Runway Wind Component</span>
+              <span>Wind Component</span>
               <span className="form-label-hint">Default: 0 kts</span>
             </label>
             <div className="input-with-toggle">
@@ -511,13 +433,66 @@ function App() {
             )}
           </div>
 
+          {/* Field Elevation */}
+          <div className="form-field">
+            <label className="form-label" htmlFor="field-elev-input">
+              <span>Field Elevation (ft MSL)</span>
+              <span className="form-label-hint">Departure Airport</span>
+            </label>
+            <input
+              id="field-elev-input"
+              type="number"
+              step={100}
+              placeholder="e.g. 1000"
+              value={isNaN(fieldElev) ? '' : fieldElev}
+              onChange={(e) => setFieldElev(parseFloat(e.target.value))}
+            />
+            <span className="form-label-hint" style={{ marginTop: '6px' }}>
+              Departure Pressure Altitude: <strong>{isNaN(pressureAltitude) ? '--' : `${pressureAltitude.toLocaleString()} ft`}</strong>
+            </span>
+            {isNaN(fieldElev) && (
+              <div className="field-error">Field elevation is required</div>
+            )}
+          </div>
+
+          {/* Cruise Elevation */}
+          <div className="form-field">
+            <label className="form-label" htmlFor="cruise-alt-input">
+              <span>Cruise Elevation (ft MSL)</span>
+              <span className="form-label-hint">
+                Ceiling: {aircraftData.climb.serviceCeiling ? `${aircraftData.climb.serviceCeiling.toLocaleString()} ft` : '--'}
+              </span>
+            </label>
+            <input
+              id="cruise-alt-input"
+              type="number"
+              step={500}
+              placeholder="e.g. 5500"
+              value={isNaN(cruiseAltitude) ? '' : cruiseAltitude}
+              onChange={(e) => setCruiseAltitude(parseFloat(e.target.value))}
+            />
+            <span className="form-label-hint" style={{ marginTop: '6px' }}>
+              Calculated Cruise Pressure Altitude: <strong>{isNaN(cruisePressureAltitude) ? '--' : `${cruisePressureAltitude.toLocaleString()} ft`}</strong>
+            </span>
+            {isNaN(cruiseAltitude) && operation === 'climb' && (
+              <div className="field-error">Cruise elevation is required</div>
+            )}
+            {!isNaN(cruiseAltitude) && !isNaN(fieldElev) && cruiseAltitude <= fieldElev && operation === 'climb' && (
+              <div className="field-error">Must be higher than field elevation ({fieldElev.toLocaleString()} ft MSL)</div>
+            )}
+          </div>
+
           {/* Custom Safety Buffer Slider */}
           <div className="form-field full-width">
             <div className="slider-label-row">
-              <label className="form-label" htmlFor="safety-buffer-slider">
-                <span>Custom Safety Buffer</span>
-                <span className="form-label-hint">Manually add safety margin to all distance calculations</span>
-              </label>
+              <div className="slider-title-group">
+                <label className="slider-label" htmlFor="safety-buffer-slider">
+                  Custom Safety Buffer
+                </label>
+                <span className="slider-label-hint">
+                  Manually add safety margin to final distance calculations
+                </span>
+              </div>
               <div className="slider-val-badge">
                 {safetyBuffer > 0 ? `+${safetyBuffer}%` : '0% (None)'}
               </div>
@@ -582,7 +557,7 @@ function App() {
           </div>
         )}
 
-        {/* Operation Tabs (Take-Off vs Landing) */}
+        {/* Operation Tabs (Take-Off / Climb / Landing) */}
         <div className="results-tabs-bar">
           <button
             type="button"
@@ -590,6 +565,13 @@ function App() {
             onClick={() => setOperation('takeoff')}
           >
             Take-Off
+          </button>
+          <button
+            type="button"
+            className={`results-tab ${operation === 'climb' ? 'active' : ''}`}
+            onClick={() => setOperation('climb')}
+          >
+            Climb
           </button>
           <button
             type="button"
@@ -623,169 +605,219 @@ function App() {
           </div>
         ))}
 
-        {/* Simultaneous Distance Output Cards */}
-        {isArcherTakeoff ? (
-          <div className="perf-outputs-wrapper">
-            {/* Output 1: Flaps Up (0°) Take-Off */}
-            <div className="perf-config-group">
-              <div className="perf-config-badge-row">
-                <span className="perf-config-pill normal">Flaps Up (0°)</span>
-                <span className="perf-config-label">Normal Take-Off</span>
-              </div>
-              <div className="distance-cards-grid">
-                <div className="distance-card">
-                  <div className="distance-card-label">Ground Roll &bull; Flaps Up (0°)</div>
-                  <div className={`distance-card-value ground-roll ${!performance ? 'empty' : ''}`}>
-                    {performance ? performance.groundRoll.toLocaleString() : '--'}
-                  </div>
-                  <div className="distance-card-unit">
-                    {safetyBuffer > 0 && performance ? `FEET (+${safetyBuffer}% BUFFER)` : 'FEET'}
-                  </div>
-                  {safetyBuffer > 0 && performance && (
-                    <div className="distance-card-base-hint">
-                      Base POH: {performance.baseGroundRoll.toLocaleString()} ft
-                    </div>
-                  )}
-                  {dataset.figures?.groundRoll && (
-                    <span className="distance-card-source">{dataset.figures.groundRoll}</span>
-                  )}
-                </div>
 
-                <div className="distance-card">
-                  <div className="distance-card-label">50 FT Obstacle &bull; Flaps Up (0°)</div>
-                  <div className={`distance-card-value obstacle-50ft ${!performance ? 'empty' : ''}`}>
-                    {performance ? performance.clearance50ft.toLocaleString() : '--'}
-                  </div>
-                  <div className="distance-card-unit">
-                    {safetyBuffer > 0 && performance ? `TOTAL FEET (+${safetyBuffer}% BUFFER)` : 'TOTAL FEET'}
-                  </div>
-                  {safetyBuffer > 0 && performance && (
-                    <div className="distance-card-base-hint">
-                      Base POH: {performance.baseClearance50ft.toLocaleString()} ft
-                    </div>
-                  )}
-                  {dataset.figures?.clearance50ft && (
-                    <span className="distance-card-source">{dataset.figures.clearance50ft}</span>
-                  )}
-                </div>
-              </div>
-            </div>
-
-            {/* Output 2: 25° Flaps Take-Off */}
-            <div className="perf-config-group">
-              <div className="perf-config-badge-row">
-                <span className="perf-config-pill shortfield">{secondaryDataset?.configuration || '25° Flaps'}</span>
-                <span className="perf-config-label">Short Field Take-Off</span>
-              </div>
-              <div className="distance-cards-grid">
-                <div className="distance-card">
-                  <div className="distance-card-label">Ground Roll &bull; {secondaryDataset?.configuration || '25° Flaps'}</div>
-                  <div className={`distance-card-value ground-roll ${!performanceFlaps25 ? 'empty' : ''}`}>
-                    {performanceFlaps25 ? performanceFlaps25.groundRoll.toLocaleString() : '--'}
-                  </div>
-                  <div className="distance-card-unit">
-                    {safetyBuffer > 0 && performanceFlaps25 ? `FEET (+${safetyBuffer}% BUFFER)` : 'FEET'}
-                  </div>
-                  {safetyBuffer > 0 && performanceFlaps25 && (
-                    <div className="distance-card-base-hint">
-                      Base POH: {performanceFlaps25.baseGroundRoll.toLocaleString()} ft
-                    </div>
-                  )}
-                  {secondaryDataset?.figures?.groundRoll && (
-                    <span className="distance-card-source">{secondaryDataset.figures.groundRoll}</span>
-                  )}
-                </div>
-
-                <div className="distance-card">
-                  <div className="distance-card-label">50 FT Obstacle &bull; {secondaryDataset?.configuration || '25° Flaps'}</div>
-                  <div className={`distance-card-value obstacle-50ft ${!performanceFlaps25 ? 'empty' : ''}`}>
-                    {performanceFlaps25 ? performanceFlaps25.clearance50ft.toLocaleString() : '--'}
-                  </div>
-                  <div className="distance-card-unit">
-                    {safetyBuffer > 0 && performanceFlaps25 ? `TOTAL FEET (+${safetyBuffer}% BUFFER)` : 'TOTAL FEET'}
-                  </div>
-                  {safetyBuffer > 0 && performanceFlaps25 && (
-                    <div className="distance-card-base-hint">
-                      Base POH: {performanceFlaps25.baseClearance50ft.toLocaleString()} ft
-                    </div>
-                  )}
-                  {secondaryDataset?.figures?.clearance50ft && (
-                    <span className="distance-card-source">{secondaryDataset.figures.clearance50ft}</span>
-                  )}
-                </div>
-              </div>
-            </div>
-          </div>
-        ) : (
+        {/* ─── CLIMB OUTPUT CARDS ─── */}
+        {operation === 'climb' && (
           <div className="perf-outputs-wrapper">
             <div className="perf-config-group">
               <div className="perf-config-badge-row">
-                <span className="perf-config-pill normal">
-                  {dataset.configuration || (operation === 'takeoff' ? 'Flaps Up (0°)' : '40° Flaps')}
-                </span>
-                <span className="perf-config-label">
-                  {operation === 'takeoff' ? 'Normal / Short Field Take-Off' : 'Normal / Short Field Landing'}
-                </span>
+                <span className="perf-config-pill normal">Full Power · Flaps Up</span>
+                <span className="perf-config-label">Maximum Rate-of-Climb Performance</span>
               </div>
-              <div className="distance-cards-grid">
-                <div className="distance-card">
-                  <div className="distance-card-label">Ground Roll</div>
-                  <div className={`distance-card-value ground-roll ${!performance ? 'empty' : ''}`}>
-                    {performance ? performance.groundRoll.toLocaleString() : '--'}
-                  </div>
-                  <div className="distance-card-unit">
-                    {safetyBuffer > 0 && performance ? `FEET (+${safetyBuffer}% BUFFER)` : 'FEET'}
-                  </div>
-                  {safetyBuffer > 0 && performance && (
-                    <div className="distance-card-base-hint">
-                      Base POH: {performance.baseGroundRoll.toLocaleString()} ft
-                    </div>
-                  )}
-                  {dataset.figures?.groundRoll && (
-                    <span className="distance-card-source">{dataset.figures.groundRoll}</span>
-                  )}
-                </div>
+              
+              {(() => {
+                const rocTable = operationTables.find(t => t.metric === 'rateOfClimb');
+                const performance = rocTable ? tableResults.get(rocTable.id) : null;
+                return (
+                  <>
+                    <div className="distance-cards-grid">
+                      {/* Rate of Climb */}
+                      <div className="distance-card">
+                        <div className="distance-card-label">Rate of Climb</div>
+                        <div className={`distance-card-value climb-roc ${!performance ? 'empty' : ''}`}>
+                          {performance?.value != null ? Math.round(performance.value).toLocaleString() : '--'}
+                        </div>
+                        <div className="distance-card-unit">FT / MIN</div>
+                        {rocTable?.figure && (
+                          <span className="distance-card-source">{rocTable.figure}</span>
+                        )}
+                      </div>
 
-                <div className="distance-card">
-                  <div className="distance-card-label">50 FT Obstacle Clearance</div>
-                  <div className={`distance-card-value obstacle-50ft ${!performance ? 'empty' : ''}`}>
-                    {performance ? performance.clearance50ft.toLocaleString() : '--'}
-                  </div>
-                  <div className="distance-card-unit">
-                    {safetyBuffer > 0 && performance ? `TOTAL FEET (+${safetyBuffer}% BUFFER)` : 'TOTAL FEET'}
-                  </div>
-                  {safetyBuffer > 0 && performance && (
-                    <div className="distance-card-base-hint">
-                      Base POH: {performance.baseClearance50ft.toLocaleString()} ft
+                      {/* Climb Gradient */}
+                      <div className="distance-card">
+                        <div className="distance-card-label">Climb Gradient</div>
+                        <div className={`distance-card-value climb-gradient ${!performance ? 'empty' : ''}`}>
+                          {performance?.climbGradientFtPerNm != null
+                            ? Math.round(performance.climbGradientFtPerNm).toLocaleString()
+                            : '--'}
+                        </div>
+                        <div className="distance-card-unit">FT / NM</div>
+                        {performance?.climbGradientPercent != null && (
+                          <div className="distance-card-base-hint">
+                            {performance.climbGradientPercent.toFixed(1)}% gradient
+                          </div>
+                        )}
+                        {rocTable?.figure && (
+                          <span className="distance-card-source">{rocTable.figure}</span>
+                        )}
+                      </div>
                     </div>
-                  )}
-                  {dataset.figures?.clearance50ft && (
-                    <span className="distance-card-source">{dataset.figures.clearance50ft}</span>
-                  )}
-                </div>
-              </div>
+
+                    {/* How gradient was calculated */}
+                    {performance && (
+                      <div className="climb-calc-detail">
+                        <span className="climb-calc-detail-label">Gradient derived from:</span>
+                        {aircraftData.climb.vy != null && (
+                          <>
+                            <span className="climb-calc-detail-item">
+                              Vy <strong>{aircraftData.climb.vy} KIAS</strong>
+                            </span>
+                            <span className="climb-calc-detail-sep">→</span>
+                          </>
+                        )}
+                        <span className="climb-calc-detail-item">
+                          TAS <strong>{Math.round(performance.climbTasKnots ?? 0)} kts</strong>
+                        </span>
+                        <span className="climb-calc-detail-sep">·</span>
+                        <span className="climb-calc-detail-item">
+                          GS <strong>{Math.round(performance.climbGroundspeedKnots ?? 0)} kts</strong>
+                        </span>
+                        <span className="climb-calc-detail-sep">·</span>
+                        <span className="climb-calc-detail-item">
+                          ({Math.round(performance.value)} ÷ {Math.round(performance.climbGroundspeedKnots ?? 0)}) × 60
+                        </span>
+                      </div>
+                    )}
+                  </>
+                );
+              })()}
             </div>
+
+            {/* Climb Profile: Time, Distance, Fuel to Cruise */}
+            {(() => {
+              const rocTable = operationTables.find(t => t.metric === 'rateOfClimb');
+              const performance = rocTable ? (tableResults.get(rocTable.id) as ClimbPerformanceResult | undefined) : null;
+              const hasProfile = performance?.timeToClimbMinutes != null;
+
+              return (
+                <div className="perf-config-group" style={{ marginTop: '20px' }}>
+                  <div className="perf-config-badge-row">
+                    <span className="perf-config-pill normal">Climb to Cruise</span>
+                    <span className="perf-config-label">
+                      Profile from {isNaN(fieldElev) ? '--' : `${fieldElev.toLocaleString()} ft MSL`} ({isNaN(pressureAltitude) ? '--' : `${pressureAltitude.toLocaleString()} ft Pressure Altitude`}) to {!isNaN(cruiseAltitude) ? `${cruiseAltitude.toLocaleString()} ft MSL` : '--'} ({isNaN(cruisePressureAltitude) ? '--' : `${cruisePressureAltitude.toLocaleString()} ft Pressure Altitude`})
+                    </span>
+                  </div>
+
+                  <div className="distance-cards-grid climb-profile-cards-grid">
+                    {/* Time to Climb */}
+                    <div className="distance-card">
+                      <div className="distance-card-label">Time to Climb</div>
+                      <div className={`distance-card-value climb-roc ${!hasProfile ? 'empty' : ''}`}>
+                        {hasProfile ? performance.timeToClimbMinutes : '--'}
+                      </div>
+                      <div className="distance-card-unit">MINUTES</div>
+                      {performance?.timeDistanceFuelFigure && (
+                        <span className="distance-card-source">{performance.timeDistanceFuelFigure}</span>
+                      )}
+                    </div>
+
+                    {/* Distance to Climb */}
+                    <div className="distance-card">
+                      <div className="distance-card-label">Distance to Climb</div>
+                      <div className={`distance-card-value climb-gradient ${!hasProfile ? 'empty' : ''}`}>
+                        {hasProfile ? performance.distanceToClimbNm : '--'}
+                      </div>
+                      <div className="distance-card-unit">NAUTICAL MILES</div>
+                      {hasProfile && performance.stillAirDistanceNm !== performance.distanceToClimbNm && (
+                        <div className="distance-card-base-hint">
+                          Still air: {performance.stillAirDistanceNm} NM ({isHeadwind ? `-${(performance.stillAirDistanceNm! - performance.distanceToClimbNm!).toFixed(1)} NM wind` : `+${(performance.distanceToClimbNm! - performance.stillAirDistanceNm!).toFixed(1)} NM wind`})
+                        </div>
+                      )}
+                      {performance?.timeDistanceFuelFigure && (
+                        <span className="distance-card-source">{performance.timeDistanceFuelFigure}</span>
+                      )}
+                    </div>
+
+                    {/* Fuel to Climb */}
+                    <div className="distance-card">
+                      <div className="distance-card-label">Fuel to Climb</div>
+                      <div className={`distance-card-value obstacle-50ft ${!hasProfile ? 'empty' : ''}`}>
+                        {hasProfile ? performance.fuelToClimbGallons : '--'}
+                      </div>
+                      <div className="distance-card-unit">GALLONS</div>
+                      {hasProfile && (
+                        <div className="distance-card-base-hint">
+                          Enroute climb fuel burn
+                        </div>
+                      )}
+                      {performance?.timeDistanceFuelFigure && (
+                        <span className="distance-card-source">{performance.timeDistanceFuelFigure}</span>
+                      )}
+                    </div>
+                  </div>
+                </div>
+              );
+            })()}
           </div>
         )}
 
+        {/* ─── TAKE-OFF / LANDING OUTPUT CARDS ─── */}
+        {operation !== 'climb' && (
+          <div className="perf-outputs-wrapper">
+            {(() => {
+              const groups = operationTables.reduce((acc, tbl) => {
+                if (!acc[tbl.configuration]) acc[tbl.configuration] = [];
+                acc[tbl.configuration].push(tbl);
+                return acc;
+              }, {} as Record<string, PerformanceTable[]>);
+
+              const hasMultipleConfigs = Object.keys(groups).length > 1;
+
+              return Object.entries(groups).map(([config, tables]) => (
+                <div className="perf-config-group" key={config}>
+                  <div className="perf-config-badge-row">
+                    <span className={`perf-config-pill ${operation === 'takeoff' && hasMultipleConfigs && config.includes('25°') ? 'shortfield' : 'normal'}`}>
+                      {config}
+                    </span>
+                    <span className="perf-config-label">
+                      {operation === 'takeoff' && hasMultipleConfigs && config.includes('25°') ? 'Short Field Take-Off' : operation === 'takeoff' ? 'Normal Take-Off' : 'Normal Landing'}
+                    </span>
+                  </div>
+                  <div className="distance-cards-grid">
+                    {tables.map(tbl => {
+                      const result = tableResults.get(tbl.id);
+                      const isRoll = tbl.metric === 'groundRoll';
+                      const is50ft = tbl.metric === 'clearance50ft';
+                      return (
+                        <div className="distance-card" key={tbl.id}>
+                          <div className="distance-card-label">{isRoll ? `Ground Roll • ${config}` : `50 FT Obstacle • ${config}`}</div>
+                          <div className={`distance-card-value ${isRoll ? 'ground-roll' : 'obstacle-50ft'} ${!result ? 'empty' : ''}`}>
+                            {result ? result.value.toLocaleString() : '--'}
+                          </div>
+                          <div className="distance-card-unit">
+                            {is50ft ? 'TOTAL FEET' : 'FEET'}
+                          </div>
+                          {safetyBuffer > 0 && result && (
+                            <div>
+                              <span className="distance-card-buffer-badge">
+                                +{safetyBuffer}% Buffer
+                              </span>
+                            </div>
+                          )}
+                          {tbl.figure && <span className="distance-card-source">{tbl.figure}</span>}
+                        </div>
+                      );
+                    })}
+                  </div>
+                </div>
+              ));
+            })()}
+          </div>
+        )}
+
+        {/* DataTable Viewer */}
+        <DataTableViewer
+          tables={operationTables}
+          currentWeight={weight}
+          currentAltitude={isNaN(pressureAltitude) ? 0 : pressureAltitude}
+          currentTempC={tempInC}
+        />
       </div>
 
-      {/* 5. Underlying POH Data Tables Section */}
-      <DataTableViewer
-        dataset={dataset}
-        alternateDataset={secondaryDataset}
-        datasetLabel={dataset.configuration || 'Flaps Up (0°)'}
-        alternateDatasetLabel={secondaryDataset?.configuration || '25° Flaps'}
-        currentWeight={weight}
-        currentAltitude={pressureAltitude}
-        currentTempC={tempInC}
-      />
-
-      {/* 6. Aviation Disclaimer Footer */}
-      <footer className="footer-disclaimer">
-        <strong>SUPPLEMENTARY REFERENCE ONLY:</strong> This tool performs multilinear interpolation based on published
-        POH performance tables. The Pilot in Command (PIC) is the sole authority for aircraft operation (14 CFR &sect; 91.3).
-        Always verify critical calculations with the approved Aircraft Flight Manual / Pilot's Operating Handbook.
+      <footer className="footer">
+        <p>
+          <strong>Disclaimer:</strong> This application is for demonstration and educational purposes only. Do not use for real-world flight planning. Always consult the official Pilot's Operating Handbook (POH) for your specific aircraft.
+        </p>
       </footer>
     </div>
   );

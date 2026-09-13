@@ -75,14 +75,14 @@ This application digitizes tabular POH performance data for popular general avia
 - Enter current aircraft takeoff or landing gross weight in pounds (lbs).
 - **Validation**: Enforces aircraft weight bounds (1,600 – 2,400 lbs). Inputs outside this range display a validation warning and clamp to the nearest envelope bound.
 
-### 5. Pressure Altitude & Field Elevation / QNH
-Enter the pressure altitude (PA) directly in feet.
-> [!TIP]
-> **Deriving Pressure Altitude from Field Elevation & Altimeter Setting (QNH):**
-> If your local altimeter setting ($QNH$) differs from standard pressure ($29.92\text{ inHg}$), calculate Pressure Altitude using:
-> $$\text{Pressure Altitude} = \text{Field Elevation (ft)} + (29.92 - \text{Altimeter Setting}) \times 1,000$$
-> *Example:* Field elevation 1,500 ft with QNH 29.72 inHg:
-> $$\text{PA} = 1500 + (29.92 - 29.72) \times 1000 = 1,700\text{ ft}$$
+### 5. Field Elevation & Altimeter Setting (QNH)
+- **Field Elevation**: Enter departure airport elevation in feet MSL.
+- **Altimeter Setting (QNH)**: Enter local barometric pressure in inches of mercury (inHg, valid range: 26.00 – 32.00 inHg, default: 29.92 inHg).
+- **Automatic Pressure Altitude Derivation**:
+  Pressure altitude (PA) is derived automatically using the standard barometric lapse rate (direct manual entry of pressure altitude is no longer used):
+  $$\text{Pressure Altitude} = \text{Field Elevation (ft)} + (29.92 - \text{Altimeter Setting}) \times 1,000$$
+  *Example:* Field elevation 1,500 ft with QNH 29.72 inHg:
+  $$\text{PA} = 1500 + (29.92 - 29.72) \times 1000 = 1,700\text{ ft}$$
 
 ### 6. Temperature
 - Numeric outside air temperature (OAT) with an instant **°C** / **°F** toggle.
@@ -107,20 +107,20 @@ For an arbitrary input point $(w, a, t)$ bounded by tabular points $(w_0, w_1)$,
    $$v = v_{w_0} + \frac{w - w_0}{w_1 - w_0} \cdot [v_{w_1} - v_{w_0}]$$
 
 ### Density Altitude Formula
-Standard ISA temperature at pressure altitude $PA$ is computed as:
-$$T_{\text{ISA}} = 15 - \left(\frac{PA}{1000}\right) \times 2$$
-Density altitude $DA$ is derived from:
-$$DA = PA + 118.8 \times (T_{\text{OAT}} - T_{\text{ISA}})$$
-When $DA > PA + 2000\text{ ft}$, the application triggers a high density altitude performance advisory.
+- Standard ISA temperature at pressure altitude $PA$ is computed as:
+  $$T_{\text{ISA}} = 15 - \left(\frac{PA}{1000}\right) \times 2$$
+- Density altitude $DA$ is derived from:
+  $$DA = PA + 118.8 \times (T_{\text{OAT}} - T_{\text{ISA}})$$
+- When $DA > PA + 2000\text{ ft}$, the application triggers a high density altitude performance advisory.
 
 ### Correction Modifiers
 - **Headwind**:
-  $$\text{Distance}_{\text{adjusted}} = \text{Distance}_{\text{base}} \times \left(1.0 - \frac{\text{Wind}}{9} \times 0.10\right)$$
+  $`\text{Distance}_{\text{adjusted}} = \text{Distance}_{\text{base}} \times \left(1.0 - \frac{\text{Wind}}{9} \times 0.10\right)`$
 - **Tailwind**:
-  $$\text{Distance}_{\text{adjusted}} = \text{Distance}_{\text{base}} \times \left(1.0 + \frac{\text{Wind}}{2} \times 0.10\right)$$
+  $`\text{Distance}_{\text{adjusted}} = \text{Distance}_{\text{base}} \times \left(1.0 + \frac{\text{Wind}}{2} \times 0.10\right)`$
 - **Grass Runway**:
-  $$\text{GroundRoll}_{\text{adjusted}} = \text{GroundRoll}_{\text{base}} \times 1.15$$
-  $$\text{Clearance50ft}_{\text{adjusted}} = \text{Clearance50ft}_{\text{base}} + (\text{GroundRoll}_{\text{base}} \times 0.15)$$
+  - Ground roll: $`\text{GroundRoll}_{\text{adjusted}} = \text{GroundRoll}_{\text{base}} \times 1.15`$
+  - 50ft obstacle clearance: $`\text{Clearance50ft}_{\text{adjusted}} = \text{Clearance50ft}_{\text{base}} + (\text{GroundRoll}_{\text{base}} \times 0.15)`$
 
 ---
 

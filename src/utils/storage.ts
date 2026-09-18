@@ -7,7 +7,6 @@ const defaultTailNumber = Object.keys(fleet)[0] || '';
 export interface SavedAppState {
   aircraft: string;
   operation: 'takeoff' | 'climb' | 'landing';
-  archerFlaps?: '0' | '25';
   surfacePaved: boolean;
   weight: number;
   fieldElev: number;
@@ -23,7 +22,6 @@ export interface SavedAppState {
 export const DEFAULT_APP_STATE: SavedAppState = {
   aircraft: defaultTailNumber,
   operation: 'takeoff',
-  archerFlaps: '0',
   surfacePaved: true,
   weight: 2300,
   fieldElev: 1000,
@@ -60,7 +58,6 @@ export function loadSavedState(): SavedAppState {
         parsed.operation === 'climb' || parsed.operation === 'landing'
           ? parsed.operation
           : 'takeoff',
-      archerFlaps: parsed.archerFlaps === '25' ? '25' : '0',
       surfacePaved: typeof parsed.surfacePaved === 'boolean' ? parsed.surfacePaved : true,
       weight:
         typeof parsed.weight === 'number' && Number.isFinite(parsed.weight) && parsed.weight > 0

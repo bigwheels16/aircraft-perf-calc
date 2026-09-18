@@ -67,8 +67,6 @@ export interface ClimbSpec {
 
 /** Complete performance data for a single aircraft type */
 export interface AircraftData {
-  /** Machine-readable identifier (e.g. 'archer2', 'c172n') */
-  id: string;
   /** Full display name */
   name: string;
   /** Maximum certified takeoff/landing weight in lbs */

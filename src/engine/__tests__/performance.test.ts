@@ -504,7 +504,7 @@ describe('Fleet JSON Integrity', () => {
     for (const tailNumber of tailNumbers) {
       const aircraft = fleet[tailNumber];
       
-      expect(aircraft).toHaveProperty('id');
+      expect(aircraft).not.toHaveProperty('id');
       expect(aircraft).toHaveProperty('name');
       expect(aircraft).toHaveProperty('maxWeight');
       expect(aircraft).toHaveProperty('minWeight');
@@ -512,7 +512,6 @@ describe('Fleet JSON Integrity', () => {
       expect(aircraft).toHaveProperty('climb');
       expect(aircraft).toHaveProperty('landing');
       
-      expect(typeof aircraft.id).toBe('string');
       expect(typeof aircraft.name).toBe('string');
       expect(typeof aircraft.maxWeight).toBe('number');
       expect(typeof aircraft.minWeight).toBe('number');

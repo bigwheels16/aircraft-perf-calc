@@ -36,7 +36,6 @@ describe('Storage Utility', () => {
       ...DEFAULT_APP_STATE,
       aircraft: 'N0002',
       operation: 'takeoff',
-      archerFlaps: '25',
       weight: 2450,
       temperature: 30,
       windKnots: 8,
@@ -47,7 +46,6 @@ describe('Storage Utility', () => {
     const restored = loadSavedState();
     expect(restored.aircraft).toBe('N0002');
     expect(restored.operation).toBe('takeoff');
-    expect(restored.archerFlaps).toBe('25');
     expect(restored.weight).toBe(2450);
     expect(restored.temperature).toBe(30);
     expect(restored.windKnots).toBe(8);
@@ -58,7 +56,6 @@ describe('Storage Utility', () => {
   it('sanitizes corrupt or invalid data from localStorage', () => {
     store['aircraft_perf_calc_state_v1'] = JSON.stringify({
       aircraft: '<script>alert("XSS")</script>',
-      archerFlaps: 'invalid-flaps',
       weight: 'not-a-number',
       temperature: null,
       windKnots: -50,
@@ -69,7 +66,6 @@ describe('Storage Utility', () => {
     const restored = loadSavedState();
     expect(restored.aircraft).toBe('N0001');
     expect(restored.operation).toBe('takeoff');
-    expect(restored.archerFlaps).toBe('0');
     expect(restored.weight).toBe(DEFAULT_APP_STATE.weight);
     expect(restored.temperature).toBe(DEFAULT_APP_STATE.temperature);
     expect(restored.windKnots).toBe(0);

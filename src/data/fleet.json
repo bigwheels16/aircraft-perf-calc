@@ -1,6 +1,5 @@
 {
   "N0001": {
-    "id": "c172n",
     "name": "Cessna 172N Skyhawk",
     "maxWeight": 2400,
     "minWeight": 1200,
@@ -789,7 +788,6 @@
     ]
   },
   "N0002": {
-    "id": "archer2",
     "name": "Piper Archer II (PA-28-181)",
     "maxWeight": 2550,
     "minWeight": 1500,

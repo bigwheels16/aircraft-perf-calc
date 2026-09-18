@@ -111,7 +111,6 @@ The top-level structure implements `FleetData` (`Record<string, AircraftData>`):
 ```json
 {
   "N0001": {
-    "id": "c172n",
     "name": "Cessna 172N Skyhawk",
     "maxWeight": 2400,
     "minWeight": 1200,
@@ -152,7 +151,6 @@ The top-level structure implements `FleetData` (`Record<string, AircraftData>`):
     "landing": [ ... ]
   },
   "N0002": {
-    "id": "archer2",
     "name": "Piper Archer II (PA-28-181)",
     "maxWeight": 2550,
     "minWeight": 1500,
@@ -201,7 +199,6 @@ Create a new JSON key representing the aircraft's unique tail number (e.g., `"N0
 
 ```json
 "N0003": {
-  "id": "c172s",
   "name": "Cessna 172S Skyhawk SP",
   "maxWeight": 2550,
   "minWeight": 1600,

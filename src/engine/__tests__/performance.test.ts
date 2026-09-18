@@ -1,7 +1,10 @@
 import { describe, it, expect } from 'vitest';
 import { calculateTable, calculateClimb } from '../performance';
-import { c172n } from '../../data/c172n';
-import { archer2 } from '../../data/archer2';
+import fleetRaw from '../../data/fleet.json';
+import type { FleetData } from '../../engine/types';
+const fleet = fleetRaw as unknown as FleetData;
+const c172n = fleet['N0001'];
+const archer2 = fleet['N0002'];
 
 describe('Performance Engine', () => {
   it('calculates standard takeoff performance without wind correctly', () => {
@@ -492,3 +495,73 @@ describe('Climb Performance Engine', () => {
     expect(result.warnings.some(w => w.includes('exceeds certified service ceiling'))).toBe(true);
   });
 });
+
+describe('Fleet JSON Integrity', () => {
+  it('has valid structure for all aircraft', () => {
+    const tailNumbers = Object.keys(fleet);
+    expect(tailNumbers.length).toBeGreaterThan(0);
+
+    for (const tailNumber of tailNumbers) {
+      const aircraft = fleet[tailNumber];
+      
+      expect(aircraft).toHaveProperty('id');
+      expect(aircraft).toHaveProperty('name');
+      expect(aircraft).toHaveProperty('maxWeight');
+      expect(aircraft).toHaveProperty('minWeight');
+      expect(aircraft).toHaveProperty('takeoff');
+      expect(aircraft).toHaveProperty('climb');
+      expect(aircraft).toHaveProperty('landing');
+      
+      expect(typeof aircraft.id).toBe('string');
+      expect(typeof aircraft.name).toBe('string');
+      expect(typeof aircraft.maxWeight).toBe('number');
+      expect(typeof aircraft.minWeight).toBe('number');
+      
+      expect(Array.isArray(aircraft.takeoff)).toBe(true);
+      expect(Array.isArray(aircraft.landing)).toBe(true);
+      
+      expect(aircraft.takeoff.length).toBeGreaterThan(0);
+      expect(aircraft.landing.length).toBeGreaterThan(0);
+      
+      expect(typeof aircraft.climb).toBe('object');
+      expect(aircraft.climb).toHaveProperty('tables');
+      expect(Array.isArray(aircraft.climb.tables)).toBe(true);
+    }
+  });
+
+  it('verifies performance calculations can run for every tail number', () => {
+    const input = {
+      weight: 2000,
+      pressureAltitude: 0,
+      temperature: 15,
+      windKnots: 0,
+      isHeadwind: true,
+      surfacePaved: true,
+    };
+
+    const tailNumbers = Object.keys(fleet);
+    for (const tailNumber of tailNumbers) {
+      const aircraft = fleet[tailNumber];
+
+      // Test takeoff roll
+      const takeoffTable = aircraft.takeoff[0];
+      const takeoffResult = calculateTable(input, takeoffTable);
+      expect(takeoffResult.value).toBeGreaterThan(0);
+
+      // Test landing roll
+      const landingTable = aircraft.landing[0];
+      const landingResult = calculateTable(input, landingTable);
+      expect(landingResult.value).toBeGreaterThan(0);
+
+      // Test climb
+      if (aircraft.climb) {
+        const climbInput = { ...input, cruiseAltitude: 5000 };
+        const climbResult = calculateClimb(climbInput, aircraft.climb);
+        if (climbResult) {
+            expect(climbResult.value).toBeGreaterThan(0);
+        }
+      }
+    }
+  });
+});
+

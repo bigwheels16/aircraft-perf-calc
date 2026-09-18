@@ -1,5 +1,11 @@
+import fleetRaw from '../data/fleet.json';
+import type { FleetData } from '../engine/types';
+
+const fleet: FleetData = fleetRaw as unknown as FleetData;
+const defaultTailNumber = Object.keys(fleet)[0] || '';
+
 export interface SavedAppState {
-  aircraft: 'C172N' | 'Archer2';
+  aircraft: string;
   operation: 'takeoff' | 'climb' | 'landing';
   archerFlaps?: '0' | '25';
   surfacePaved: boolean;
@@ -15,7 +21,7 @@ export interface SavedAppState {
 }
 
 export const DEFAULT_APP_STATE: SavedAppState = {
-  aircraft: 'C172N',
+  aircraft: defaultTailNumber,
   operation: 'takeoff',
   archerFlaps: '0',
   surfacePaved: true,
@@ -46,8 +52,10 @@ export function loadSavedState(): SavedAppState {
     const parsed = JSON.parse(raw);
     if (typeof parsed !== 'object' || parsed === null) return DEFAULT_APP_STATE;
 
+    const validAircraft = typeof parsed.aircraft === 'string' && Object.prototype.hasOwnProperty.call(fleet, parsed.aircraft) ? parsed.aircraft : defaultTailNumber;
+
     return {
-      aircraft: parsed.aircraft === 'Archer2' ? 'Archer2' : 'C172N',
+      aircraft: validAircraft,
       operation:
         parsed.operation === 'climb' || parsed.operation === 'landing'
           ? parsed.operation

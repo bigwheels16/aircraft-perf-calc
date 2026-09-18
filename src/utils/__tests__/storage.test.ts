@@ -34,7 +34,7 @@ describe('Storage Utility', () => {
   it('saves and restores valid state', () => {
     saveAppState({
       ...DEFAULT_APP_STATE,
-      aircraft: 'Archer2',
+      aircraft: 'N0002',
       operation: 'takeoff',
       archerFlaps: '25',
       weight: 2450,
@@ -45,7 +45,7 @@ describe('Storage Utility', () => {
     });
 
     const restored = loadSavedState();
-    expect(restored.aircraft).toBe('Archer2');
+    expect(restored.aircraft).toBe('N0002');
     expect(restored.operation).toBe('takeoff');
     expect(restored.archerFlaps).toBe('25');
     expect(restored.weight).toBe(2450);
@@ -67,12 +67,40 @@ describe('Storage Utility', () => {
     });
 
     const restored = loadSavedState();
-    expect(restored.aircraft).toBe('C172N');
+    expect(restored.aircraft).toBe('N0001');
     expect(restored.operation).toBe('takeoff');
     expect(restored.archerFlaps).toBe('0');
     expect(restored.weight).toBe(DEFAULT_APP_STATE.weight);
     expect(restored.temperature).toBe(DEFAULT_APP_STATE.temperature);
     expect(restored.windKnots).toBe(0);
     expect(restored.safetyBuffer).toBe(0);
+  });
+
+  it('safely handles prototype keys for aircraft to prevent prototype pollution', () => {
+    store['aircraft_perf_calc_state_v1'] = JSON.stringify({
+      aircraft: 'constructor',
+      weight: 2300,
+    });
+    
+    let restored = loadSavedState();
+    expect(restored.aircraft).toBe('N0001'); // should fallback to default
+
+    store['aircraft_perf_calc_state_v1'] = JSON.stringify({
+      aircraft: '__proto__',
+      weight: 2300,
+    });
+    
+    restored = loadSavedState();
+    expect(restored.aircraft).toBe('N0001'); // should fallback to default
+  });
+
+  it('falls back to default tail number if saved aircraft is completely missing from JSON', () => {
+    store['aircraft_perf_calc_state_v1'] = JSON.stringify({
+      aircraft: 'MISSING_TAIL',
+      weight: 2300,
+    });
+
+    const restored = loadSavedState();
+    expect(restored.aircraft).toBe('N0001');
   });
 });

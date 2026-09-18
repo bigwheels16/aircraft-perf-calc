@@ -6,14 +6,15 @@ A fast, lightweight, 100% client-side Single Page Application (SPA) designed for
 
 ## Table of Contents
 1. [Overview](#overview)
-2. [Supported Aircraft](#supported-aircraft)
+2. [Supported Fleet](#supported-fleet)
 3. [Key Features & Calculation Engine](#key-features--calculation-engine)
 4. [Input Guide & Parameter Reference](#input-guide--parameter-reference)
-5. [Interpolation & Physics Rules](#interpolation--physics-rules)
-6. [Tech Stack & Architecture](#tech-stack--architecture)
-7. [Local Development & Testing](#local-development--testing)
-8. [Deployment Guide (Firebase Hosting)](#deployment-guide-firebase-hosting)
-9. [Aviation Safety Disclaimer](#aviation-safety-disclaimer)
+5. [Fleet Configuration & Adding Aircraft](#fleet-configuration--adding-aircraft)
+6. [Interpolation & Physics Rules](#interpolation--physics-rules)
+7. [Tech Stack & Architecture](#tech-stack--architecture)
+8. [Local Development & Testing](#local-development--testing)
+9. [Deployment Guide (Firebase Hosting)](#deployment-guide-firebase-hosting)
+10. [Aviation Safety Disclaimer](#aviation-safety-disclaimer)
 
 ---
 
@@ -30,12 +31,14 @@ This application digitizes tabular POH performance data for popular general avia
 
 ---
 
-## Supported Aircraft
+## Supported Fleet
 
-| Aircraft Model | Configuration / Engine | POH Tabular Gross Weight Range | Tabular Altitudes | Tabular Temperatures |
-| :--- | :--- | :--- | :--- | :--- |
-| **Cessna 172N Skyhawk** | Lycoming O-320-H2AD (160 HP) | 1,600 – 2,400 lbs | 0 – 8,000 ft PA | 0°C – 40°C (32°F – 104°F) |
-| **Piper Archer II (PA-28-181)** | Lycoming O-360-A4M (180 HP) | 1,600 – 2,400 lbs | 0 – 8,000 ft PA | 0°C – 40°C (32°F – 104°F) |
+The application stores all aircraft configurations in a single consolidated JSON file ([`src/data/fleet.json`](./src/data/fleet.json)), keyed by aircraft tail number:
+
+| Tail Number | Aircraft Model | Configuration / Engine | Certified Gross Weight Range | Tabular Altitudes | Tabular Temperatures |
+| :--- | :--- | :--- | :--- | :--- | :--- |
+| **N0001** | **Cessna 172N Skyhawk** | Lycoming O-320-H2AD (160 HP) | 1,200 – 2,400 lbs | 0 – 8,000 ft PA | 0°C – 40°C (32°F – 104°F) |
+| **N0002** | **Piper Archer II (PA-28-181)** | Lycoming O-360-A4M (180 HP) | 1,500 – 2,550 lbs | 0 – 8,000 ft PA | 0°C – 40°C (32°F – 104°F) |
 
 ---
 
@@ -60,11 +63,13 @@ This application digitizes tabular POH performance data for popular general avia
 ## Input Guide & Parameter Reference
 
 ### 1. Aircraft Selection
-- **Cessna 172N**: Standard flaps setting per POH (Takeoff: Flaps 0° / Flaps 10°; Landing: Flaps 40°).
-- **Piper Archer II**: Standard flaps setting per POH (Takeoff: Flaps 0° / 25°; Landing: Flaps 40°).
+- **Dynamic Dropdown Selector**: The UI dynamically renders an accessible, styled `<select id="aircraft-select">` dropdown menu populated from top-level tail number keys defined in [`src/data/fleet.json`](./src/data/fleet.json). Each dropdown option clearly displays both the tail number and aircraft model (e.g., `N0001 - Cessna 172N Skyhawk`, `N0002 - Piper Archer II (PA-28-181)`).
+- **Automatic Envelope & Configuration Adaptation**: Selecting an aircraft instantly updates the weight slider limits to match that specific airframe's `minWeight` and `maxWeight`, dynamically configures available flap settings (e.g., Flaps 0° / 10° for Cessna vs. Flaps 0° / 25° for Archer II), and switches the active climb performance specification.
+- **Session Persistence & Safe Fallbacks**: The user's active tail number is saved to `localStorage` (`aircraft_perf_calc_state_v1`). On reload, the app verifies that the stored key exists in `fleet.json` using prototype-safe validation (`Object.prototype.hasOwnProperty`). If an aircraft has been removed or the saved key is invalid, the app automatically and safely defaults to the first available tail number.
 
 ### 2. Operation
-- **Takeoff**: Computes ground roll to unstick and total distance to reach 50 feet AGL.
+- **Takeoff**: Computes ground roll to unstick and total distance to reach 50 feet AGL across available flap configurations.
+- **Climb**: Computes rate of climb (ROC), climb speeds ($V_x$, $V_y$), service ceiling, and estimated time, distance, and fuel to climb to target cruise altitude.
 - **Landing**: Computes landing distance from a 50-foot obstacle and subsequent ground roll to a full stop.
 
 ### 3. Runway Surface
@@ -73,7 +78,7 @@ This application digitizes tabular POH performance data for popular general avia
 
 ### 4. Gross Weight
 - Enter current aircraft takeoff or landing gross weight in pounds (lbs).
-- **Validation**: Enforces aircraft weight bounds (1,600 – 2,400 lbs). Inputs outside this range display a validation warning and clamp to the nearest envelope bound.
+- **Validation**: Dynamically enforces the selected aircraft's certified gross weight envelope (e.g., 1,200 – 2,400 lbs for N0001; 1,500 – 2,550 lbs for N0002). Inputs outside this range display a validation warning and clamp to the nearest valid envelope bound.
 
 ### 5. Field Elevation & Altimeter Setting (QNH)
 - **Field Elevation**: Enter departure airport elevation in feet MSL.
@@ -92,6 +97,166 @@ This application digitizes tabular POH performance data for popular general avia
 - Numeric wind velocity in knots.
 - **Headwind / Tailwind Toggle**: Select whether the runway wind component is a headwind or tailwind.
 - *Default:* 0 knots (calm wind).
+
+---
+
+## Fleet Configuration & Adding Aircraft
+
+All aircraft performance data is centralized in a single plain JSON file: [`src/data/fleet.json`](./src/data/fleet.json). Instead of organizing data by airplane model across separate TypeScript modules, data is keyed directly by individual aircraft **tail numbers** (e.g., `"N0001"`, `"N0002"`).
+
+### JSON File Structure (`fleet.json`)
+
+The top-level structure implements `FleetData` (`Record<string, AircraftData>`):
+
+```json
+{
+  "N0001": {
+    "id": "c172n",
+    "name": "Cessna 172N Skyhawk",
+    "maxWeight": 2400,
+    "minWeight": 1200,
+    "takeoff": [
+      {
+        "id": "takeoff-flaps0-roll",
+        "label": "Normal Take-Off · Flaps Up (0°)",
+        "configuration": "Flaps Up (0°)",
+        "metric": "groundRoll",
+        "figure": "POH Section 5",
+        "weights": [1600, 2000, 2400],
+        "altitudes": [0, 2000, 4000, 6000, 8000],
+        "temperatures": [0, 10, 20, 30, 40],
+        "data": [
+          [
+            [448, 493, 538, 582, 627],
+            [538, 591, 645, 699, 753],
+            [627, 690, 753, 815, 878],
+            [717, 788, 860, 932, 1004],
+            [807, 887, 968, 1048, 1129]
+          ],
+          ...
+        ]
+      }
+    ],
+    "climb": {
+      "tables": [ ... ],
+      "vx": 65,
+      "vy": 73,
+      "serviceCeiling": 14200,
+      "timeDistanceFuelFigure": "POH Fig 5-17",
+      "profile": [
+        { "altitude": 0, "timeMinutes": 0, "distanceNm": 0, "fuelGallons": 0 },
+        { "altitude": 2000, "timeMinutes": 2.5, "distanceNm": 3.0, "fuelGallons": 0.7 },
+        ...
+      ]
+    },
+    "landing": [ ... ]
+  },
+  "N0002": {
+    "id": "archer2",
+    "name": "Piper Archer II (PA-28-181)",
+    "maxWeight": 2550,
+    "minWeight": 1500,
+    "takeoff": [ ... ],
+    "climb": { ... },
+    "landing": [ ... ]
+  }
+}
+```
+
+### Schema & Data Model Reference
+
+Each aircraft entry (`AircraftData`) in `fleet.json` contains the following fields:
+
+| Property | Type | Description |
+| :--- | :--- | :--- |
+| `id` | `string` | Machine-readable identifier / model slug (e.g., `'c172n'`, `'archer2'`). |
+| `name` | `string` | Full display name shown in the UI dropdown selector alongside the tail number. |
+| `maxWeight` | `number` | Maximum certified takeoff and landing gross weight in pounds (lbs). |
+| `minWeight` | `number` | Minimum weight boundary of the published POH envelope in pounds (lbs). |
+| `takeoff` | `PerformanceTable[]` | Array of performance tables for takeoff ground roll and 50-foot obstacle clearance across available flap settings. |
+| `climb` | `ClimbSpec` | Climb specifications, including rate of climb tables, $V_x$, $V_y$, service and absolute ceilings, and cumulative climb profiles. |
+| `landing` | `PerformanceTable[]` | Array of performance tables for landing ground roll and 50-foot obstacle clearance across available flap settings. |
+
+#### Performance Table Matrix Format (`PerformanceTable`)
+
+Performance tables represent a 3-dimensional grid matrix indexed across Weight $\times$ Pressure Altitude $\times$ Temperature:
+- `weights`: 1D array of weight breakpoints (lbs), sorted in ascending order.
+- `altitudes`: 1D array of pressure altitude breakpoints (ft), sorted in ascending order.
+- `temperatures`: 1D array of outside air temperature breakpoints (°C), sorted in ascending order.
+- `data`: 3D numeric array where `data[w][a][t]` represents the performance metric value at `weights[w]`, `altitudes[a]`, and `temperatures[t]`.
+- `metric`: Output metric type (`'groundRoll'` in ft, `'clearance50ft'` in ft, or `'rateOfClimb'` in FPM).
+- `configuration`: Flap or aerodynamic configuration label (e.g., `'Flaps Up (0°)'`, `'25° Flaps'`). Tables sharing the same configuration are displayed side-by-side on output cards.
+
+---
+
+### How to Add a New Aircraft to `fleet.json`
+
+To add a new aircraft to the calculator, follow these steps:
+
+#### Step 1: Open `src/data/fleet.json`
+Open [`src/data/fleet.json`](./src/data/fleet.json) in your code editor.
+
+#### Step 2: Add a Top-Level Entry Keyed by Tail Number
+Create a new JSON key representing the aircraft's unique tail number (e.g., `"N0003"` or `"N734SP"`):
+
+```json
+"N0003": {
+  "id": "c172s",
+  "name": "Cessna 172S Skyhawk SP",
+  "maxWeight": 2550,
+  "minWeight": 1600,
+  "takeoff": [],
+  "climb": { "tables": [] },
+  "landing": []
+}
+```
+
+#### Step 3: Populate Takeoff and Landing Performance Tables
+Extract tabular data from the aircraft's official POH:
+1. Ensure the `weights`, `altitudes`, and `temperatures` breakpoint arrays are strictly monotonically increasing.
+2. Structure the `data` 3D array such that outer array rows correspond to `weights`, inner arrays to `altitudes`, and leaf values to `temperatures`.
+3. Add entries for both `groundRoll` and `clearance50ft` for each flap setting:
+   ```json
+   {
+     "id": "takeoff-flaps0-roll",
+     "label": "Normal Take-Off · Flaps Up (0°)",
+     "configuration": "Flaps Up (0°)",
+     "metric": "groundRoll",
+     "figure": "POH Figure 5-5",
+     "weights": [2200, 2400, 2550],
+     "altitudes": [0, 2000, 4000, 6000, 8000],
+     "temperatures": [0, 10, 20, 30, 40],
+     "data": [ ... ]
+   }
+   ```
+
+#### Step 4: Populate Climb Specifications
+Define the aircraft's climb characteristics:
+- Add rate-of-climb tables (`metric: "rateOfClimb"`) under `climb.tables`.
+- Specify $V_x$ (`vx`) and $V_y$ (`vy`) in knots indicated airspeed (KIAS).
+- Define `serviceCeiling` (altitude where ROC drops to 100 FPM) and optional `absoluteCeiling` (altitude where ROC drops to 0 FPM).
+- Provide cumulative profile points (`profile`) from sea level for still-air time (minutes), distance (NM), and fuel (gallons).
+
+#### Step 5: Verify and Validate
+Run the test suite and production build to ensure JSON syntax correctness, type safety, and calculation accuracy:
+```bash
+npm test
+npm run build
+```
+
+#### Step 6: Automatic UI Integration
+Because `fleet.json` is bundled directly at build time and the UI dynamically maps over `Object.entries(fleetData)`, the new tail number will **automatically appear in the dropdown selector** with no manual modifications needed in `App.tsx` or any UI component!
+
+---
+
+### Architecture & Security Details
+
+- **Direct Vite Bundling (Zero Network Requests)**:
+  `fleet.json` is imported directly via ES modules (`import fleetRaw from './data/fleet.json'`). Vite bundles and parses the JSON at build time, preserving full offline capability without requiring runtime `fetch()` calls or service workers.
+- **Prototype Pollution Prevention**:
+  Because the active tail number can be loaded from user-controlled browser `localStorage`, the application strictly validates that the key is an actual own-property of the fleet object using `Object.prototype.hasOwnProperty.call(fleet, parsed.aircraft)` before referencing aircraft properties.
+- **Fail-Safe Fallbacks**:
+  If the stored tail number is missing or invalid (e.g., after an aircraft has been removed from `fleet.json`), the application gracefully falls back to the first available aircraft key (`Object.keys(fleet)[0]`), ensuring the UI never enters an unhandled or blank state.
 
 ---
 
@@ -140,15 +305,21 @@ aircraft-performance-calc/
 ├── package.json               # Dependencies and build/test scripts
 ├── src/
 │   ├── App.tsx                # Main React UI component and reactive state
+│   ├── App.css                # Styling, responsive grid, and aircraft selector layout
+│   ├── components/
+│   │   └── DataTableViewer.tsx# Interactive POH tabular matrix inspector modal
 │   ├── data/
-│   │   ├── c172n.ts           # Cessna 172N takeoff & landing POH datasets
-│   │   └── archer2.ts         # Piper Archer II takeoff & landing POH datasets
-│   └── engine/
-│       ├── types.ts           # POHDataset, PerformanceInput, and PerformanceOutput types
-│       ├── interpolation.ts   # 1D and 3D multilinear interpolation algorithms
-│       ├── performance.ts     # Core calculation engine, environmental adjustments, and warnings
+│   │   └── fleet.json         # Consolidated fleet performance dataset keyed by tail number
+│   ├── engine/
+│   │   ├── types.ts           # FleetData, AircraftData, PerformanceTable, and ClimbSpec types
+│   │   ├── interpolation.ts   # 1D and 3D multilinear interpolation algorithms
+│   │   ├── performance.ts     # Core calculation engine, environmental adjustments, and warnings
+│   │   └── __tests__/
+│   │       └── performance.test.ts # Vitest automated test suite
+│   └── utils/
+│       ├── storage.ts         # Safe localStorage state persistence and schema validation
 │       └── __tests__/
-│           └── performance.test.ts # Vitest automated test suite
+│           └── storage.test.ts # Unit tests for state persistence and fallback sanitization
 └── dist/                      # Production build output
 ```
 

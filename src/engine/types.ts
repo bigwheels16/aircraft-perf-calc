@@ -82,3 +82,5 @@ export interface AircraftData {
   /** Landing performance tables (groundRoll and/or clearance50ft tables per configuration) */
   landing: PerformanceTable[];
 }
+
+export type FleetData = Record<string, AircraftData>;

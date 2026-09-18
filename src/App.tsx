@@ -1,6 +1,7 @@
 import { useState, useMemo, useEffect } from 'react';
-import { c172n } from './data/c172n';
-import { archer2 } from './data/archer2';
+import fleetRaw from './data/fleet.json';
+import type { FleetData } from './engine/types';
+const fleetData: FleetData = fleetRaw as unknown as FleetData;
 import { calculateTable, calculateClimb } from './engine/performance';
 import type { PerformanceInput, TableResult, ClimbPerformanceResult } from './engine/performance';
 import type { PerformanceTable } from './engine/types';
@@ -9,9 +10,10 @@ import { loadSavedState, saveAppState } from './utils/storage';
 import './App.css';
 
 function App() {
+  if (Object.keys(fleetData).length === 0) return <div className="app-container"><div className="error-box">No aircraft data available</div></div>;
   const [initialState] = useState(() => loadSavedState());
 
-  const [aircraft, setAircraft] = useState<'C172N' | 'Archer2'>(initialState.aircraft);
+  const [aircraft, setAircraft] = useState<string>(initialState.aircraft);
   const [operation, setOperation] = useState<'takeoff' | 'climb' | 'landing'>(initialState.operation);
   const [surfacePaved, setSurfacePaved] = useState<boolean>(initialState.surfacePaved);
 
@@ -57,7 +59,7 @@ function App() {
     safetyBuffer,
   ]);
 
-  const aircraftData = useMemo(() => aircraft === 'C172N' ? c172n : archer2, [aircraft]);
+  const aircraftData = useMemo(() => fleetData[aircraft] || Object.values(fleetData)[0], [aircraft]);
 
   // Compute active primary tables
   const operationTables = useMemo(() => {
@@ -110,13 +112,13 @@ function App() {
     } else if (weight < minWeight) {
       errors.push(
         `Gross weight (${weight.toLocaleString()} lbs) is below minimum POH envelope (${minWeight.toLocaleString()} lbs for ${
-          aircraft === 'C172N' ? 'Cessna 172N' : 'Piper Archer II'
+          aircraftData.name
         }).`
       );
     } else if (weight > maxWeight) {
       errors.push(
         `Gross weight (${weight.toLocaleString()} lbs) exceeds maximum certified takeoff/landing weight (${maxWeight.toLocaleString()} lbs for ${
-          aircraft === 'C172N' ? 'Cessna 172N' : 'Piper Archer II'
+          aircraftData.name
         }).`
       );
     }
@@ -245,30 +247,27 @@ function App() {
 
       {/* 1. Aircraft Selection */}
       <div className="section-title">Select Aircraft</div>
-      <div className="aircraft-grid">
-        <div
-          className={`aircraft-card ${aircraft === 'C172N' ? 'selected' : ''}`}
-          onClick={() => {
-            setAircraft('C172N');
-            if (weight > 2400) setWeight(2400);
+      <div className="aircraft-selector" style={{ marginBottom: '22px' }}>
+        <select
+          id="aircraft-select"
+          aria-label="Select Aircraft"
+          value={aircraft}
+          onChange={(e) => {
+            const tailNumber = e.target.value;
+            const data = fleetData[tailNumber];
+            setAircraft(tailNumber);
+            if (weight > data.maxWeight) setWeight(data.maxWeight);
+            if (weight < data.minWeight) setWeight(data.minWeight);
           }}
+          style={{ width: '100%', padding: '10px', fontSize: '16px', borderRadius: '4px', border: '1px solid #ccc' }}
         >
-          <div className="aircraft-card-name">Cessna 172N Skyhawk</div>
-          <div className="aircraft-card-sub">POH Section 5 &bull; MTOW: 2,400 lbs &bull; Lycoming O-320-H2AD</div>
-        </div>
-
-        <div
-          className={`aircraft-card ${aircraft === 'Archer2' ? 'selected' : ''}`}
-          onClick={() => {
-            setAircraft('Archer2');
-            if (weight < 2000) setWeight(2200);
-          }}
-        >
-          <div className="aircraft-card-name">Piper Archer II (PA-28-181)</div>
-          <div className="aircraft-card-sub">POH Section 5 &bull; MTOW: 2,550 lbs &bull; Lycoming O-360-A4M</div>
-        </div>
+          {Object.entries(fleetData).map(([tailNumber, data]) => (
+            <option key={tailNumber} value={tailNumber}>
+              {tailNumber} - {data.name}
+            </option>
+          ))}
+        </select>
       </div>
-
       {/* 2. Runway Surface Toggle */}
       <div style={{ marginBottom: '22px' }}>
         <div className="section-title">Runway Surface</div>

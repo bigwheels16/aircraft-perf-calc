@@ -28,6 +28,6 @@ RUN adduser -D -g '' nginxuser && \
 
 USER nginxuser
 
-EXPOSE 8080
+EXPOSE 8081
 
 CMD ["nginx", "-g", "daemon off;"]

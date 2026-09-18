@@ -14,7 +14,7 @@ The **Aircraft Performance Calculator** provides pilots with fast, accurate take
 
 - **Data-Driven Fleet Selection**: Dynamically select aircraft by tail number via a dropdown menu populated directly from the fleet configuration.
 - **Multilinear Interpolation**: Performs tri-linear interpolation across 3D grids of gross weight, pressure altitude, and outside air temperature.
-- **Dual Distance Calculations**: Computes and displays ground roll and total distance to clear a 50-ft obstacle side-by-side.
+- **Dual Distance Calculations**: Computes and displays total distance for take-off and landing.
 - **Climb Performance**: Calculates rate of climb (ROC), climb gradient (ft/NM and %), estimated climb groundspeed, and cumulative time, distance, and fuel to cruise altitude.
 - **Environmental Corrections**: Accounts for headwind/tailwind components, runway surface conditions (paved vs. dry grass/turf), and user-defined safety buffers (0–100%).
 - **Interactive Data Table Viewer**: Inspect underlying POH data tables with real-time cell highlighting for current operating parameters.

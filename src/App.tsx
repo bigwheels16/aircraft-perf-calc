@@ -67,8 +67,53 @@ function App() {
     return operation === 'takeoff' ? aircraftData.takeoff : aircraftData.landing;
   }, [aircraftData, operation]);
 
-  const maxWeight = aircraftData.maxWeight;
-  const minWeight = aircraftData.minWeight;
+  // Available POH data envelope for the active operation
+  const dataEnvelope = useMemo(() => {
+    let minW = Infinity;
+    let maxW = -Infinity;
+    let minA = Infinity;
+    let maxA = -Infinity;
+    let minT = Infinity;
+    let maxT = -Infinity;
+
+    for (const t of operationTables) {
+      minW = Math.min(minW, t.weights[0]);
+      maxW = Math.max(maxW, t.weights[t.weights.length - 1]);
+      minA = Math.min(minA, t.altitudes[0]);
+      maxA = Math.max(maxA, t.altitudes[t.altitudes.length - 1]);
+      minT = Math.min(minT, t.temperatures[0]);
+      maxT = Math.max(maxT, t.temperatures[t.temperatures.length - 1]);
+    }
+
+    // Safe fallbacks if tables array is empty
+    if (!Number.isFinite(minW)) minW = aircraftData.minWeight;
+    if (!Number.isFinite(maxW)) maxW = aircraftData.maxWeight;
+    if (!Number.isFinite(minA)) minA = 0;
+    if (!Number.isFinite(maxA)) maxA = 8000;
+    if (!Number.isFinite(minT)) minT = 0;
+    if (!Number.isFinite(maxT)) maxT = 40;
+
+    let minProfileAlt = 0;
+    let maxProfileAlt = 12000;
+    if (operation === 'climb' && aircraftData.climb.profile && aircraftData.climb.profile.length > 0) {
+      minProfileAlt = aircraftData.climb.profile[0].altitude;
+      maxProfileAlt = aircraftData.climb.profile[aircraftData.climb.profile.length - 1].altitude;
+    }
+
+    return {
+      minWeight: minW,
+      maxWeight: maxW,
+      minAltitude: minA,
+      maxAltitude: maxA,
+      minTempC: minT,
+      maxTempC: maxT,
+      minProfileAlt,
+      maxProfileAlt,
+    };
+  }, [aircraftData, operation, operationTables]);
+
+  const maxWeight = dataEnvelope.maxWeight;
+  const minWeight = dataEnvelope.minWeight;
   const isWeightValid = !isNaN(weight) && weight >= minWeight && weight <= maxWeight;
 
   // Compute Departure Pressure Altitude: Field Elevation + (29.92 - Altimeter) * 1000
@@ -78,6 +123,8 @@ function App() {
     }
     return Math.round(fieldElev + (29.92 - altimeterSetting) * 1000);
   }, [fieldElev, altimeterSetting]);
+
+  const isAltitudeValid = !isNaN(pressureAltitude) && pressureAltitude >= dataEnvelope.minAltitude && pressureAltitude <= dataEnvelope.maxAltitude;
 
   // Compute Cruise Pressure Altitude: Target Cruise Altitude + (29.92 - Altimeter) * 1000
   const cruisePressureAltitude = useMemo(() => {
@@ -89,6 +136,7 @@ function App() {
 
   // Convert temperature to Celsius for engine calculation
   const tempInC = tempUnit === 'F' ? ((temperature - 32) * 5) / 9 : temperature;
+  const isTempValid = !isNaN(temperature) && tempInC >= dataEnvelope.minTempC && tempInC <= dataEnvelope.maxTempC;
 
   // Compute equivalent opposite unit temperature
   const equivalentTemp = useMemo(() => {
@@ -109,15 +157,9 @@ function App() {
     // Weight validation
     if (isNaN(weight)) {
       errors.push('Gross weight is empty or not a valid number.');
-    } else if (weight < minWeight) {
+    } else if (weight < minWeight || weight > maxWeight) {
       errors.push(
-        `Gross weight (${weight.toLocaleString()} lbs) is below minimum POH envelope (${minWeight.toLocaleString()} lbs for ${
-          aircraftData.name
-        }).`
-      );
-    } else if (weight > maxWeight) {
-      errors.push(
-        `Gross weight (${weight.toLocaleString()} lbs) exceeds maximum certified takeoff/landing weight (${maxWeight.toLocaleString()} lbs for ${
+        `Gross weight (${weight.toLocaleString()} lbs) is outside the available POH data envelope (${minWeight.toLocaleString()} \u2013 ${maxWeight.toLocaleString()} lbs for ${
           aircraftData.name
         }).`
       );
@@ -133,11 +175,29 @@ function App() {
       errors.push(`Altimeter setting (${altimeterSetting.toFixed(2)} inHg) must be between 26.00 and 32.00 inHg.`);
     }
 
+    if (!isNaN(pressureAltitude)) {
+      if (pressureAltitude < dataEnvelope.minAltitude || pressureAltitude > dataEnvelope.maxAltitude) {
+        errors.push(
+          `Departure pressure altitude (${pressureAltitude.toLocaleString()} ft) is outside the available POH data envelope (${dataEnvelope.minAltitude.toLocaleString()} \u2013 ${dataEnvelope.maxAltitude.toLocaleString()} ft).`
+        );
+      }
+    }
+
     // Temperature validation
     if (isNaN(temperature)) {
       errors.push('Outside air temperature is empty or not a valid number.');
-    } else if (tempInC < -273.15) {
-      errors.push('Outside air temperature cannot be below absolute zero (-273.15°C / -459.67°F).');
+    } else if (tempInC < dataEnvelope.minTempC || tempInC > dataEnvelope.maxTempC) {
+      const minF = Math.round((dataEnvelope.minTempC * 9) / 5 + 32);
+      const maxF = Math.round((dataEnvelope.maxTempC * 9) / 5 + 32);
+      if (tempUnit === 'C') {
+        errors.push(
+          `Outside air temperature (${temperature}°C) is outside the available POH data envelope (${dataEnvelope.minTempC}°C \u2013 ${dataEnvelope.maxTempC}°C / ${minF}°F \u2013 ${maxF}°F).`
+        );
+      } else {
+        errors.push(
+          `Outside air temperature (${temperature}°F) is outside the available POH data envelope (${minF}°F \u2013 ${maxF}°F / ${dataEnvelope.minTempC}°C \u2013 ${dataEnvelope.maxTempC}°C).`
+        );
+      }
     }
 
     // Wind validation
@@ -152,7 +212,19 @@ function App() {
       if (isNaN(cruiseAltitude)) {
         errors.push('Target cruise altitude is empty or not a valid number.');
       } else if (!isNaN(fieldElev) && cruiseAltitude <= fieldElev) {
-        errors.push(`Target cruise altitude (${cruiseAltitude.toLocaleString()} ft) must be higher than field elevation (${fieldElev.toLocaleString()} ft).`);
+        errors.push(
+          `Target cruise altitude (${cruiseAltitude.toLocaleString()} ft MSL) must be higher than field elevation (${fieldElev.toLocaleString()} ft MSL).`
+        );
+      } else if (!isNaN(cruisePressureAltitude)) {
+        if (cruisePressureAltitude < dataEnvelope.minProfileAlt || cruisePressureAltitude > dataEnvelope.maxProfileAlt) {
+          errors.push(
+            `Target cruise pressure altitude (${cruisePressureAltitude.toLocaleString()} ft) is outside the available POH climb profile envelope (${dataEnvelope.minProfileAlt.toLocaleString()} \u2013 ${dataEnvelope.maxProfileAlt.toLocaleString()} ft).`
+          );
+        } else if (aircraftData.climb.serviceCeiling != null && cruisePressureAltitude > aircraftData.climb.serviceCeiling) {
+          errors.push(
+            `Target cruise pressure altitude (${cruisePressureAltitude.toLocaleString()} ft) exceeds certified service ceiling (${aircraftData.climb.serviceCeiling.toLocaleString()} ft).`
+          );
+        }
       }
     }
 
@@ -161,14 +233,18 @@ function App() {
     weight,
     minWeight,
     maxWeight,
-    aircraft,
+    dataEnvelope,
+    aircraftData,
     fieldElev,
     altimeterSetting,
-    cruiseAltitude,
-    operation,
+    pressureAltitude,
     temperature,
     tempInC,
+    tempUnit,
     windKnots,
+    operation,
+    cruiseAltitude,
+    cruisePressureAltitude,
   ]);
 
   // Run calculation if all inputs are valid for primary dataset
@@ -195,35 +271,37 @@ function App() {
       }
     } else {
       operationTables.forEach(t => {
-        results.set(t.id, calculateTable(input, t));
+        const res = calculateTable(input, t);
+        if (res) {
+          results.set(t.id, res);
+        }
       });
     }
     return results;
   }, [validationErrors, pressureAltitude, cruisePressureAltitude, weight, tempInC, windKnots, isHeadwind, surfacePaved, safetyBuffer, operation, aircraftData, operationTables]);
 
   const operationalWarnings = useMemo(() => {
+    if (validationErrors.length > 0) return [];
     const warnings = new Set<string>();
     tableResults.forEach(res => {
       res.warnings.forEach(w => warnings.add(w));
     });
     return Array.from(warnings);
-  }, [tableResults]);
+  }, [validationErrors, tableResults]);
 
-  // Density altitude (from performance calculation or calculated directly from PA and OAT)
+  // Density altitude (from performance calculation)
   const currentDensityAltitude = useMemo(() => {
+    if (validationErrors.length > 0) return null;
     if (tableResults.size > 0) {
       const firstRes = Array.from(tableResults.values())[0];
-      return firstRes.densityAltitude;
-    }
-    if (!isNaN(pressureAltitude) && !isNaN(tempInC)) {
-      const isaTemp = 15 - (pressureAltitude / 1000) * 2;
-      return Math.round(pressureAltitude + 118.8 * (tempInC - isaTemp));
+      return firstRes?.densityAltitude ?? null;
     }
     return null;
-  }, [tableResults, pressureAltitude, tempInC]);
+  }, [validationErrors, tableResults]);
 
   // High density altitude flag (DA > PA + 2,000 ft)
   const isHighDensityAltitude = useMemo(() => {
+    if (validationErrors.length > 0) return false;
     if (operationalWarnings.some((w) => w.toLowerCase().includes('density altitude'))) {
       return true;
     }
@@ -231,12 +309,13 @@ function App() {
       return currentDensityAltitude > pressureAltitude + 2000;
     }
     return false;
-  }, [operationalWarnings, currentDensityAltitude, pressureAltitude]);
+  }, [validationErrors, operationalWarnings, currentDensityAltitude, pressureAltitude]);
 
   // Other operational warnings (excluding density altitude which is displayed above tabs)
   const otherOperationalWarnings = useMemo(() => {
+    if (validationErrors.length > 0) return [];
     return operationalWarnings.filter((w) => !w.toLowerCase().includes('density altitude'));
-  }, [operationalWarnings]);
+  }, [validationErrors, operationalWarnings]);
 
   return (
     <div className="app-container">
@@ -300,7 +379,7 @@ function App() {
           <div className="form-field">
             <label className="form-label">
               <span>Gross Weight (lbs)</span>
-              <span className="form-label-hint">Max: {maxWeight.toLocaleString()} lbs</span>
+              <span className="form-label-hint">Envelope: {minWeight.toLocaleString()} &ndash; {maxWeight.toLocaleString()} lbs</span>
             </label>
             <input
               type="number"
@@ -314,7 +393,7 @@ function App() {
               <div className="field-error">
                 {isNaN(weight)
                   ? 'Gross weight is required'
-                  : `Weight must be within envelope (${minWeight.toLocaleString()} \u2013 ${maxWeight.toLocaleString()} lbs)`}
+                  : `Weight must be within available data envelope (${minWeight.toLocaleString()} \u2013 ${maxWeight.toLocaleString()} lbs)`}
               </div>
             )}
           </div>
@@ -323,7 +402,11 @@ function App() {
           <div className="form-field">
             <label className="form-label">
               <span>Outside Air Temp</span>
-              <span className="form-label-hint">{tempUnit === 'C' ? '0°C to 40°C' : '32°F to 104°F'}</span>
+              <span className="form-label-hint">
+                {tempUnit === 'C'
+                  ? `${dataEnvelope.minTempC}°C to ${dataEnvelope.maxTempC}°C`
+                  : `${Math.round((dataEnvelope.minTempC * 9) / 5 + 32)}°F to ${Math.round((dataEnvelope.maxTempC * 9) / 5 + 32)}°F`}
+              </span>
             </label>
             <div className="input-with-toggle">
               <input
@@ -364,6 +447,11 @@ function App() {
             </span>
             {isNaN(temperature) && (
               <div className="field-error">Outside air temperature is required</div>
+            )}
+            {!isNaN(temperature) && !isTempValid && (
+              <div className="field-error">
+                Temperature must be within available data envelope ({tempUnit === 'C' ? `${dataEnvelope.minTempC}°C \u2013 ${dataEnvelope.maxTempC}°C` : `${Math.round((dataEnvelope.minTempC * 9) / 5 + 32)}°F \u2013 ${Math.round((dataEnvelope.maxTempC * 9) / 5 + 32)}°F`})
+              </div>
             )}
           </div>
 
@@ -448,9 +536,19 @@ function App() {
             />
             <span className="form-label-hint" style={{ marginTop: '6px' }}>
               Departure Pressure Altitude: <strong>{isNaN(pressureAltitude) ? '--' : `${pressureAltitude.toLocaleString()} ft`}</strong>
+              {!isNaN(pressureAltitude) && (pressureAltitude < dataEnvelope.minAltitude || pressureAltitude > dataEnvelope.maxAltitude) && (
+                <span style={{ color: '#f87171', marginLeft: '6px' }}>
+                  (Available: {dataEnvelope.minAltitude.toLocaleString()} &ndash; {dataEnvelope.maxAltitude.toLocaleString()} ft)
+                </span>
+              )}
             </span>
             {isNaN(fieldElev) && (
               <div className="field-error">Field elevation is required</div>
+            )}
+            {!isNaN(fieldElev) && !isAltitudeValid && !isNaN(pressureAltitude) && (
+              <div className="field-error">
+                Departure pressure altitude ({pressureAltitude.toLocaleString()} ft) must be between {dataEnvelope.minAltitude.toLocaleString()} and {dataEnvelope.maxAltitude.toLocaleString()} ft
+              </div>
             )}
           </div>
 
@@ -472,12 +570,27 @@ function App() {
             />
             <span className="form-label-hint" style={{ marginTop: '6px' }}>
               Calculated Cruise Pressure Altitude: <strong>{isNaN(cruisePressureAltitude) ? '--' : `${cruisePressureAltitude.toLocaleString()} ft`}</strong>
+              {!isNaN(cruisePressureAltitude) && (cruisePressureAltitude < dataEnvelope.minProfileAlt || cruisePressureAltitude > dataEnvelope.maxProfileAlt) && (
+                <span style={{ color: '#f87171', marginLeft: '6px' }}>
+                  (Available: {dataEnvelope.minProfileAlt.toLocaleString()} &ndash; {dataEnvelope.maxProfileAlt.toLocaleString()} ft)
+                </span>
+              )}
             </span>
             {isNaN(cruiseAltitude) && operation === 'climb' && (
               <div className="field-error">Cruise elevation is required</div>
             )}
             {!isNaN(cruiseAltitude) && !isNaN(fieldElev) && cruiseAltitude <= fieldElev && operation === 'climb' && (
               <div className="field-error">Must be higher than field elevation ({fieldElev.toLocaleString()} ft MSL)</div>
+            )}
+            {!isNaN(cruiseAltitude) && !isNaN(cruisePressureAltitude) && operation === 'climb' && (cruisePressureAltitude < dataEnvelope.minProfileAlt || cruisePressureAltitude > dataEnvelope.maxProfileAlt) && (
+              <div className="field-error">
+                Cruise pressure altitude ({cruisePressureAltitude.toLocaleString()} ft) must be between {dataEnvelope.minProfileAlt.toLocaleString()} and {dataEnvelope.maxProfileAlt.toLocaleString()} ft
+              </div>
+            )}
+            {!isNaN(cruiseAltitude) && !isNaN(cruisePressureAltitude) && operation === 'climb' && aircraftData.climb.serviceCeiling != null && cruisePressureAltitude > aircraftData.climb.serviceCeiling && (
+              <div className="field-error">
+                Exceeds service ceiling ({aircraftData.climb.serviceCeiling.toLocaleString()} ft)
+              </div>
             )}
           </div>
 

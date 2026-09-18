@@ -67,27 +67,26 @@ export type TableResult = {
  *   - Wind modifies groundspeed used to compute gradient
  *   - Safety buffer does NOT apply
  */
-export function calculateTable(input: PerformanceInput, table: PerformanceTable): TableResult {
+export function calculateTable(input: PerformanceInput, table: PerformanceTable): TableResult | null {
   const { weight, pressureAltitude, temperature, windKnots, isHeadwind, surfacePaved } = input;
   const warnings: string[] = [];
 
-  // Clamp inputs to table envelope with warnings
-  let calcWeight = weight;
-  let calcAlt = pressureAltitude;
-  let calcTemp = temperature;
+  const minWeight = table.weights[0];
+  const maxWeight = table.weights[table.weights.length - 1];
+  const minAlt = table.altitudes[0];
+  const maxAlt = table.altitudes[table.altitudes.length - 1];
+  const minTemp = table.temperatures[0];
+  const maxTemp = table.temperatures[table.temperatures.length - 1];
 
-  if (weight < table.weights[0] || weight > table.weights[table.weights.length - 1]) {
-    warnings.push('Weight out of POH envelope.');
-    calcWeight = Math.min(Math.max(weight, table.weights[0]), table.weights[table.weights.length - 1]);
+  // If values are outside available data, do not calculate or return any performance values
+  if (
+    isNaN(weight) || weight < minWeight || weight > maxWeight ||
+    isNaN(pressureAltitude) || pressureAltitude < minAlt || pressureAltitude > maxAlt ||
+    isNaN(temperature) || temperature < minTemp || temperature > maxTemp
+  ) {
+    return null;
   }
-  if (pressureAltitude < table.altitudes[0] || pressureAltitude > table.altitudes[table.altitudes.length - 1]) {
-    warnings.push('Altitude out of POH envelope.');
-    calcAlt = Math.min(Math.max(pressureAltitude, table.altitudes[0]), table.altitudes[table.altitudes.length - 1]);
-  }
-  if (temperature < table.temperatures[0] || temperature > table.temperatures[table.temperatures.length - 1]) {
-    warnings.push('Temperature out of POH envelope.');
-    calcTemp = Math.min(Math.max(temperature, table.temperatures[0]), table.temperatures[table.temperatures.length - 1]);
-  }
+
   if (!isHeadwind && windKnots > 10) {
     warnings.push('Tailwind > 10 kts is not recommended/approved for this aircraft.');
   }
@@ -100,7 +99,7 @@ export function calculateTable(input: PerformanceInput, table: PerformanceTable)
   }
 
   const rawValue = interpolate3D(
-    calcWeight, calcAlt, calcTemp,
+    weight, pressureAltitude, temperature,
     table.weights, table.altitudes, table.temperatures,
     table.data
   );
@@ -206,8 +205,12 @@ export type ClimbPerformanceResult = TableResult & {
 function interpolateProfile(
   profile: import('./types').ClimbProfilePoint[],
   alt: number
-): { timeMinutes: number; distanceNm: number; fuelGallons: number } {
-  if (alt <= profile[0].altitude) {
+): { timeMinutes: number; distanceNm: number; fuelGallons: number } | null {
+  if (!profile.length) return null;
+  if (alt < profile[0].altitude || alt > profile[profile.length - 1].altitude) {
+    return null;
+  }
+  if (alt === profile[0].altitude) {
     return {
       timeMinutes: profile[0].timeMinutes,
       distanceNm: profile[0].distanceNm,
@@ -215,14 +218,11 @@ function interpolateProfile(
     };
   }
   const last = profile[profile.length - 1];
-  if (alt >= last.altitude) {
-    const prev = profile[profile.length - 2] ?? profile[profile.length - 1];
-    const dAlt = last.altitude - prev.altitude || 1;
-    const frac = (alt - prev.altitude) / dAlt;
+  if (alt === last.altitude) {
     return {
-      timeMinutes: prev.timeMinutes + frac * (last.timeMinutes - prev.timeMinutes),
-      distanceNm: prev.distanceNm + frac * (last.distanceNm - prev.distanceNm),
-      fuelGallons: prev.fuelGallons + frac * (last.fuelGallons - prev.fuelGallons),
+      timeMinutes: last.timeMinutes,
+      distanceNm: last.distanceNm,
+      fuelGallons: last.fuelGallons,
     };
   }
   for (let i = 0; i < profile.length - 1; i++) {
@@ -237,7 +237,7 @@ function interpolateProfile(
       };
     }
   }
-  return profile[0];
+  return null;
 }
 
 /**
@@ -252,6 +252,7 @@ export function calculateClimb(
   if (!spec.tables.length) return null;
 
   const primary = calculateTable(input, spec.tables[0]);
+  if (!primary) return null;
 
   // Re-derive gradient with the actual Vy from spec
   if (spec.vy != null && primary.climbTasKnots != null) {
@@ -286,19 +287,21 @@ export function calculateClimb(
       const depValues = interpolateProfile(spec.profile, depAlt);
       const cruiseValues = interpolateProfile(spec.profile, cruiseAlt);
 
-      const rawTime = Math.max(0, cruiseValues.timeMinutes - depValues.timeMinutes);
-      const rawDist = Math.max(0, cruiseValues.distanceNm - depValues.distanceNm);
-      const rawFuel = Math.max(0, cruiseValues.fuelGallons - depValues.fuelGallons);
+      if (depValues && cruiseValues) {
+        const rawTime = Math.max(0, cruiseValues.timeMinutes - depValues.timeMinutes);
+        const rawDist = Math.max(0, cruiseValues.distanceNm - depValues.distanceNm);
+        const rawFuel = Math.max(0, cruiseValues.fuelGallons - depValues.fuelGallons);
 
-      // Wind correction on distance
-      // Headwind reduces ground distance covered; tailwind increases it
-      const windEffect = (input.isHeadwind ? -input.windKnots : input.windKnots) * (rawTime / 60);
-      const finalDist = Math.max(0.1, Number((rawDist + windEffect).toFixed(1)));
+        // Wind correction on distance
+        // Headwind reduces ground distance covered; tailwind increases it
+        const windEffect = (input.isHeadwind ? -input.windKnots : input.windKnots) * (rawTime / 60);
+        const finalDist = Math.max(0.1, Number((rawDist + windEffect).toFixed(1)));
 
-      timeToClimbMinutes = Number(rawTime.toFixed(1));
-      stillAirDistanceNm = Number(rawDist.toFixed(1));
-      distanceToClimbNm = finalDist;
-      fuelToClimbGallons = Number(rawFuel.toFixed(1));
+        timeToClimbMinutes = Number(rawTime.toFixed(1));
+        stillAirDistanceNm = Number(rawDist.toFixed(1));
+        distanceToClimbNm = finalDist;
+        fuelToClimbGallons = Number(rawFuel.toFixed(1));
+      }
 
       if (spec.serviceCeiling != null && cruiseAlt > spec.serviceCeiling) {
         primary.warnings.push(

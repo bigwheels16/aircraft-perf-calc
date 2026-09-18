@@ -58,20 +58,20 @@ export const DataTableViewer: React.FC<DataTableViewerProps> = ({
 
   // Find bounding indices for highlighting
   const findBounds = (arr: number[], val: number) => {
-    if (!arr || arr.length === 0) return [0, 0];
-    if (isNaN(val)) return [-1, -1];
-    if (val <= arr[0]) return [0, 0];
-    if (val >= arr[arr.length - 1]) return [arr.length - 1, arr.length - 1];
+    if (!arr || arr.length === 0) return [-1, -1];
+    if (isNaN(val) || val < arr[0] || val > arr[arr.length - 1]) return [-1, -1];
+    if (val === arr[0]) return [0, 0];
+    if (val === arr[arr.length - 1]) return [arr.length - 1, arr.length - 1];
     for (let i = 0; i < arr.length - 1; i++) {
       if (val >= arr[i] && val <= arr[i + 1]) {
         return [i, i + 1];
       }
     }
-    return [0, 0];
+    return [-1, -1];
   };
 
-  const altBounds = activeTable ? findBounds(activeTable.altitudes, currentAltitude) : [0, 0];
-  const tempBounds = activeTable ? findBounds(activeTable.temperatures, currentTempC) : [0, 0];
+  const altBounds = activeTable ? findBounds(activeTable.altitudes, currentAltitude) : [-1, -1];
+  const tempBounds = activeTable ? findBounds(activeTable.temperatures, currentTempC) : [-1, -1];
 
   if (!tables || tables.length === 0) return null;
 

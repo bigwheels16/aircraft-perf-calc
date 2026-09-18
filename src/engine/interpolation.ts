@@ -23,7 +23,7 @@ export function interpolate1D(x: number, x0: number, x1: number, y0: number, y1:
  * 3. Weight interpolation between the remaining two values to produce the final scalar.
  *
  * Bounds handling:
- * Inputs outside grid bounds are clamped to the minimum or maximum grid coordinates.
+ * Caller ensures inputs are within table envelope. Coordinates outside grid bounds are clamped.
  *
  * @param w - Aircraft gross weight in pounds (lbs)
  * @param a - Pressure altitude in feet (ft)

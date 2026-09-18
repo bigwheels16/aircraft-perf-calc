@@ -279,20 +279,36 @@ describe('Performance Engine', () => {
     expect(Math.abs(unpaved50ft.value - base50ft.value * 1.15)).toBeLessThan(2);
   });
 
-  it('clamps out of bounds temperature and warns', () => {
+  it('returns null when temperature is outside available data', () => {
     const tableRoll = c172n.takeoff.find(t => t.metric === 'groundRoll' && t.configuration === 'Flaps Up (0°)')!;
-    const input = { weight: 2000, pressureAltitude: 0, temperature: 50, windKnots: 0, isHeadwind: true, surfacePaved: true };
-    const result = calculateTable(input, tableRoll);
+    const inputHigh = { weight: 2000, pressureAltitude: 0, temperature: 50, windKnots: 0, isHeadwind: true, surfacePaved: true };
+    expect(calculateTable(inputHigh, tableRoll)).toBeNull();
 
-    expect(result.warnings).toContain('Temperature out of POH envelope.');
+    const inputLow = { weight: 2000, pressureAltitude: 0, temperature: -10, windKnots: 0, isHeadwind: true, surfacePaved: true };
+    expect(calculateTable(inputLow, tableRoll)).toBeNull();
   });
 
-  it('clamps out of bounds weight and warns', () => {
+  it('returns null when weight is outside available data', () => {
     const tableRoll = c172n.takeoff.find(t => t.metric === 'groundRoll' && t.configuration === 'Flaps Up (0°)')!;
-    const input = { weight: 3000, pressureAltitude: 0, temperature: 15, windKnots: 0, isHeadwind: true, surfacePaved: true };
-    const result = calculateTable(input, tableRoll);
+    const inputHigh = { weight: 3000, pressureAltitude: 0, temperature: 15, windKnots: 0, isHeadwind: true, surfacePaved: true };
+    expect(calculateTable(inputHigh, tableRoll)).toBeNull();
 
-    expect(result.warnings).toContain('Weight out of POH envelope.');
+    const inputLow = { weight: 1400, pressureAltitude: 0, temperature: 15, windKnots: 0, isHeadwind: true, surfacePaved: true };
+    expect(calculateTable(inputLow, tableRoll)).toBeNull();
+  });
+
+  it('returns null when pressure altitude is outside available data', () => {
+    const tableRoll = c172n.takeoff.find(t => t.metric === 'groundRoll' && t.configuration === 'Flaps Up (0°)')!;
+    const inputHigh = { weight: 2000, pressureAltitude: 9000, temperature: 15, windKnots: 0, isHeadwind: true, surfacePaved: true };
+    expect(calculateTable(inputHigh, tableRoll)).toBeNull();
+
+    const inputLow = { weight: 2000, pressureAltitude: -500, temperature: 15, windKnots: 0, isHeadwind: true, surfacePaved: true };
+    expect(calculateTable(inputLow, tableRoll)).toBeNull();
+  });
+
+  it('returns null when climb input values are outside available data', () => {
+    const inputOutOfEnvelope = { weight: 3000, pressureAltitude: 0, temperature: 15, windKnots: 0, isHeadwind: true, surfacePaved: true };
+    expect(calculateClimb(inputOutOfEnvelope, c172n.climb)).toBeNull();
   });
   
   it('calculates density altitude correctly', () => {
@@ -545,12 +561,14 @@ describe('Fleet JSON Integrity', () => {
       // Test takeoff roll
       const takeoffTable = aircraft.takeoff[0];
       const takeoffResult = calculateTable(input, takeoffTable);
-      expect(takeoffResult.value).toBeGreaterThan(0);
+      expect(takeoffResult).not.toBeNull();
+      expect(takeoffResult!.value).toBeGreaterThan(0);
 
       // Test landing roll
       const landingTable = aircraft.landing[0];
       const landingResult = calculateTable(input, landingTable);
-      expect(landingResult.value).toBeGreaterThan(0);
+      expect(landingResult).not.toBeNull();
+      expect(landingResult!.value).toBeGreaterThan(0);
 
       // Test climb
       if (aircraft.climb) {

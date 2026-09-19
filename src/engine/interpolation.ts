@@ -15,6 +15,18 @@ export function interpolate1D(x: number, x0: number, x1: number, y0: number, y1:
 }
 
 /**
+ * Indices of the two grid points bracketing `val` (the same index twice when `val` is on or past an end).
+ */
+export function gridBounds(val: number, arr: number[]): [number, number] {
+  if (val <= arr[0]) return [0, 0];
+  if (val >= arr[arr.length - 1]) return [arr.length - 1, arr.length - 1];
+  for (let i = 0; i < arr.length - 1; i++) {
+    if (val >= arr[i] && val <= arr[i + 1]) return [i, i + 1];
+  }
+  return [0, 0];
+}
+
+/**
  * Performs trilinear (3D) interpolation across weight, pressure altitude, and temperature.
  *
  * The interpolation resolves dimensions sequentially:
@@ -39,18 +51,9 @@ export function interpolate3D(
   weights: number[], altitudes: number[], temperatures: number[],
   data: number[][][]
 ): number {
-  const getBounds = (val: number, arr: number[]) => {
-    if (val <= arr[0]) return [0, 0];
-    if (val >= arr[arr.length - 1]) return [arr.length - 1, arr.length - 1];
-    for (let i = 0; i < arr.length - 1; i++) {
-      if (val >= arr[i] && val <= arr[i + 1]) return [i, i + 1];
-    }
-    return [0, 0];
-  };
-
-  const [w0i, w1i] = getBounds(w, weights);
-  const [a0i, a1i] = getBounds(a, altitudes);
-  const [t0i, t1i] = getBounds(t, temperatures);
+  const [w0i, w1i] = gridBounds(w, weights);
+  const [a0i, a1i] = gridBounds(a, altitudes);
+  const [t0i, t1i] = gridBounds(t, temperatures);
 
   const w0 = weights[w0i];
   const w1 = weights[w1i];
@@ -71,4 +74,24 @@ export function interpolate3D(
 
   // Interpolate across weight
   return interpolate1D(w, w0, w1, v0, v1);
+}
+
+/**
+ * Bilinear (2D) interpolation across pressure altitude and temperature.
+ * Coordinates outside the grid are clamped; callers check the envelope first.
+ *
+ * @param data - 2D lookup array indexed by [altitudeIndex][temperatureIndex]
+ */
+export function interpolate2D(
+  a: number, t: number,
+  altitudes: number[], temperatures: number[],
+  data: number[][]
+): number {
+  const [a0i, a1i] = gridBounds(a, altitudes);
+  const [t0i, t1i] = gridBounds(t, temperatures);
+  const t0 = temperatures[t0i];
+  const t1 = temperatures[t1i];
+  const v0 = interpolate1D(t, t0, t1, data[a0i][t0i], data[a0i][t1i]);
+  const v1 = interpolate1D(t, t0, t1, data[a1i][t0i], data[a1i][t1i]);
+  return interpolate1D(a, altitudes[a0i], altitudes[a1i], v0, v1);
 }

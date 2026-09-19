@@ -1,5 +1,5 @@
-import type { PerformanceTable, ClimbSpec } from './types';
-import { interpolate3D } from './interpolation';
+import type { PerformanceTable, ClimbSpec, WindCorrection } from './types';
+import { gridBounds, interpolate1D, interpolate2D, interpolate3D } from './interpolation';
 
 /**
  * Inputs for a performance table calculation.
@@ -54,12 +54,88 @@ export type TableResult = {
 };
 
 /**
+ * Start of the warning added when a result uses data extrapolated beyond the printed POH chart.
+ * Conservative: it also appears within one grid step of the chart's edge.
+ */
+export const EXTRAPOLATED_WARNING = 'Conditions are at or beyond the edge of the printed';
+
+const pushOnce = (warnings: string[], warning: string) => {
+  if (!warnings.includes(warning)) warnings.push(warning);
+};
+
+/** True if any grid point the interpolation draws on is marked as extrapolated beyond the printed chart. */
+function usesExtrapolatedData(table: PerformanceTable, weight: number, altitude: number, temperature: number): boolean {
+  const ws = contributingIndices(weight, table.weights);
+  const as = contributingIndices(altitude, table.altitudes);
+  const ts = contributingIndices(temperature, table.temperatures);
+  return ws.some(i => as.some(j => ts.some(k => table.extrapolated![i][j][k] === 1)));
+}
+
+/** Indices of the grid points that contribute to interpolating at `val` (one when it is on a grid point). */
+function contributingIndices(val: number, arr: number[]): number[] {
+  const [i0, i1] = gridBounds(val, arr);
+  if (val === arr[i0]) return [i0];
+  if (val === arr[i1]) return [i1];
+  return [i0, i1];
+}
+
+/**
+ * Apply wind using the POH chart's wind guide lines, the way a pilot follows them:
+ * interpolate between the neighbouring lines by zero-wind distance, then read along
+ * them to the wind speed.
+ *
+ * Beyond the chart's wind data the result stays conservative and a warning is added:
+ * headwind credit is capped at the chart's highest headwind, and tailwind lines are
+ * extended past their printed end.
+ */
+export function applyChartWind(
+  distance: number,
+  windKnots: number,
+  isHeadwind: boolean,
+  wind: WindCorrection,
+  warnings: string[]
+): number {
+  if (windKnots <= 0) return distance;
+  const { zeroWindDistances: zero, knots, distances } = isHeadwind ? wind.headwind : wind.tailwind;
+  const maxKnots = knots[knots.length - 1];
+
+  let kts = windKnots;
+  if (isHeadwind && windKnots > maxKnots) {
+    kts = maxKnots;
+    warnings.push(`Headwind above ${maxKnots} kts is beyond the POH chart; credit limited to ${maxKnots} kts.`);
+  } else if (!isHeadwind && windKnots > maxKnots) {
+    warnings.push(`Tailwind above ${maxKnots} kts is beyond the POH chart; distance extrapolated from the chart's tailwind lines.`);
+  }
+
+  // Neighbouring guide lines (extended past the first/last line, like following the nearest lines on the chart)
+  if (distance < zero[0] || distance > zero[zero.length - 1]) {
+    pushOnce(warnings, `${EXTRAPOLATED_WARNING} ${wind.source}; wind correction extrapolated beyond them.`);
+  }
+  let i = 0;
+  while (i < zero.length - 2 && distance > zero[i + 1]) i++;
+
+  // Distance along each guide line at this wind speed (lines are straight, so extend the last segment past the end)
+  let k = 0;
+  while (k < knots.length - 2 && kts > knots[k + 1]) k++;
+  const along = (row: number[]) => interpolate1D(kts, knots[k], knots[k + 1], row[k], row[k + 1]);
+
+  const result = interpolate1D(distance, zero[i], zero[i + 1], along(distances[i]), along(distances[i + 1]));
+  const [printedMin, printedMax] = wind.printedDistances;
+  if (result < printedMin || result > printedMax) {
+    pushOnce(warnings, `${EXTRAPOLATED_WARNING} ${wind.source}; wind correction extrapolated beyond them.`);
+  }
+  return result;
+}
+
+/**
  * Calculate performance for a single PerformanceTable.
  *
  * Wind / surface / buffer corrections:
  * - Takeoff / Landing distances:
- *   - Headwind: -10% per 9 kts
- *   - Tailwind: +10% per 2 kts (warning if > 10 kts)
+ *   - Wind from the table's windCorrection (the POH chart's own wind lines) when present, otherwise:
+ *     - Headwind: -10% per 9 kts
+ *     - Tailwind: +10% per 2 kts
+ *   - Tailwind > 10 kts: warning
  *   - Grass/turf: +15% of ground roll added to both distances
  *   - Safety buffer applied after all corrections
  * - Climb (rateOfClimb):
@@ -103,6 +179,10 @@ export function calculateTable(input: PerformanceInput, table: PerformanceTable)
     table.weights, table.altitudes, table.temperatures,
     table.data
   );
+
+  if (table.extrapolated && usesExtrapolatedData(table, weight, pressureAltitude, temperature)) {
+    warnings.push(`${EXTRAPOLATED_WARNING} ${table.figure ?? 'POH chart'}; value extrapolated beyond published data.`);
+  }
 
   // ── CLIMB ────────────────────────────────────────────────────────────────────
   if (table.metric === 'rateOfClimb') {
@@ -151,14 +231,18 @@ export function calculateTable(input: PerformanceInput, table: PerformanceTable)
   let dist = rawValue;
 
   // Wind correction
-  let windFactor = 1.0;
-  if (windKnots > 0) {
-    windFactor = isHeadwind
-      ? 1.0 - (windKnots / 9) * 0.10
-      : 1.0 + (windKnots / 2) * 0.10;
+  if (table.windCorrection) {
+    dist = applyChartWind(dist, windKnots, isHeadwind, table.windCorrection, warnings);
+  } else {
+    let windFactor = 1.0;
+    if (windKnots > 0) {
+      windFactor = isHeadwind
+        ? 1.0 - (windKnots / 9) * 0.10
+        : 1.0 + (windKnots / 2) * 0.10;
+    }
+    windFactor = Math.max(windFactor, 0);
+    dist *= windFactor;
   }
-  windFactor = Math.max(windFactor, 0);
-  dist *= windFactor;
 
   // Surface correction (grass/turf) — applied only to groundRoll portion
   // For groundRoll tables: add 15% to the distance
@@ -240,6 +324,53 @@ function interpolateProfile(
   return null;
 }
 
+type ProfileValues = { timeMinutes: number; distanceNm: number; fuelGallons: number };
+
+/**
+ * Cumulative time, distance and fuel from sea level to a pressure altitude: from the spec's
+ * profileTable at the given OAT when present, otherwise from its altitude-only profile.
+ * Returns null, with a warning, when the altitude or temperature is outside the data.
+ */
+function readClimbProfile(
+  spec: ClimbSpec,
+  altitude: number,
+  temperature: number,
+  label: string,
+  warnings: string[]
+): ProfileValues | null {
+  const table = spec.profileTable;
+  if (table) {
+    const aMin = table.altitudes[0];
+    const aMax = table.altitudes[table.altitudes.length - 1];
+    const tMin = table.temperatures[0];
+    const tMax = table.temperatures[table.temperatures.length - 1];
+    if (altitude < aMin || altitude > aMax || temperature < tMin || temperature > tMax) {
+      warnings.push(
+        `${label} (${altitude.toLocaleString()} ft, ${temperature}°C) is outside the ${table.figure} data ` +
+        `(${aMin.toLocaleString()}–${aMax.toLocaleString()} ft, ${tMin} to ${tMax}°C); time, distance and fuel to climb not calculated.`
+      );
+      return null;
+    }
+    const as = contributingIndices(altitude, table.altitudes);
+    const ts = contributingIndices(temperature, table.temperatures);
+    if (as.some(i => ts.some(j => table.extrapolated[i][j] === 1))) {
+      pushOnce(warnings, `${EXTRAPOLATED_WARNING} ${table.figure}; time, distance and fuel to climb extrapolated beyond published data.`);
+    }
+    const read = (grid: number[][]) => interpolate2D(altitude, temperature, table.altitudes, table.temperatures, grid);
+    return { timeMinutes: read(table.timeMinutes), distanceNm: read(table.distanceNm), fuelGallons: read(table.fuelGallons) };
+  }
+
+  const profile = spec.profile!;
+  const values = interpolateProfile(profile, altitude);
+  if (!values) {
+    warnings.push(
+      `${label} (${altitude.toLocaleString()} ft) is outside the climb profile data ` +
+      `(${profile[0].altitude.toLocaleString()}–${profile[profile.length - 1].altitude.toLocaleString()} ft); time, distance and fuel to climb not calculated.`
+    );
+  }
+  return values;
+}
+
 /**
  * Calculate all climb tables in a ClimbSpec and return the primary ROC result
  * with TAS/gradient using the spec's actual Vy speed, plus Time, Distance, and Fuel
@@ -279,13 +410,15 @@ export function calculateClimb(
   let stillAirDistanceNm: number | undefined;
   let fuelToClimbGallons: number | undefined;
 
-  if (spec.profile && input.cruiseAltitude != null && !isNaN(input.cruiseAltitude)) {
+  if ((spec.profileTable || spec.profile) && input.cruiseAltitude != null && !isNaN(input.cruiseAltitude)) {
     const depAlt = input.pressureAltitude;
     const cruiseAlt = input.cruiseAltitude;
 
     if (cruiseAlt > depAlt) {
-      const depValues = interpolateProfile(spec.profile, depAlt);
-      const cruiseValues = interpolateProfile(spec.profile, cruiseAlt);
+      // Read at the departure and cruise altitudes and subtract. The POH asks for the OAT at each
+      // altitude; both readings use the one OAT input, as the app has no cruise temperature input.
+      const depValues = readClimbProfile(spec, depAlt, input.temperature, 'Departure altitude', primary.warnings);
+      const cruiseValues = readClimbProfile(spec, cruiseAlt, input.temperature, 'Cruise altitude', primary.warnings);
 
       if (depValues && cruiseValues) {
         const rawTime = Math.max(0, cruiseValues.timeMinutes - depValues.timeMinutes);

@@ -33,6 +33,39 @@ export interface PerformanceTable {
   temperatures: number[];
   /** data[weightIdx][altIdx][tempIdx] = metric value */
   data: number[][][];
+  /**
+   * extrapolated[weightIdx][altIdx][tempIdx] = 1 where the grid point lies outside the printed
+   * POH chart and was read by extending the chart's lines, else 0 (numbers keep the bundle small).
+   * Results using these points get a warning.
+   */
+  extrapolated?: (0 | 1)[][][];
+  /**
+   * Wind correction read from the POH chart's own wind section. When absent,
+   * the generic rule of thumb in performance.ts is used instead.
+   */
+  windCorrection?: WindCorrection;
+}
+
+/**
+ * Distance with wind, read from the POH chart's headwind and tailwind guide lines.
+ * Headwind and tailwind lines may start at different zero-wind distances.
+ */
+export interface WindCorrection {
+  /** Where the chart's wind data came from (e.g. 'POH Fig 5-9 headwind and tailwind guide lines') */
+  source: string;
+  /** Lowest and highest distance (ft) printed on the chart's distance scale; results outside it get a warning */
+  printedDistances: [number, number];
+  headwind: WindCorrectionTable;
+  tailwind: WindCorrectionTable;
+}
+
+export interface WindCorrectionTable {
+  /** Zero-wind distances (ft) at which this direction's guide lines start, ascending */
+  zeroWindDistances: number[];
+  /** Wind speeds in knots, ascending from 0 to the most the chart covers */
+  knots: number[];
+  /** distances[lineIdx][knotsIdx] = distance with that wind (ft); row i starts at zeroWindDistances[i] */
+  distances: number[][];
 }
 
 /** Cumulative climb profile point from sea level (Time, Distance, Fuel to Climb) */
@@ -45,6 +78,24 @@ export interface ClimbProfilePoint {
   distanceNm: number;
   /** Cumulative fuel used from sea level in gallons */
   fuelGallons: number;
+}
+
+/**
+ * Cumulative time, distance and fuel to climb from sea level, read from a POH chart that also
+ * depends on outside air temperature (e.g. POH Fig 5-17). Each grid is indexed [altIdx][tempIdx].
+ */
+export interface ClimbProfileTable {
+  /** POH source reference (e.g. 'POH Fig 5-17') */
+  figure: string;
+  /** Pressure altitude breakpoints in ft, ascending */
+  altitudes: number[];
+  /** Temperature breakpoints in °C, ascending */
+  temperatures: number[];
+  timeMinutes: number[][];
+  distanceNm: number[][];
+  fuelGallons: number[][];
+  /** 1 where the grid point lies outside the printed chart and was read by extending its lines, else 0 (numbers keep the bundle small) */
+  extrapolated: (0 | 1)[][];
 }
 
 /** Climb-specific metadata and configuration */
@@ -61,8 +112,10 @@ export interface ClimbSpec {
   absoluteCeiling?: number;
   /** POH Figure or Table source citation for Time, Distance, Fuel to Climb (e.g. 'POH Fig 5-17') */
   timeDistanceFuelFigure?: string;
-  /** Cumulative time, distance, and fuel profile points from sea level */
+  /** Cumulative time, distance, and fuel profile points from sea level (altitude only; used when there is no profileTable) */
   profile?: ClimbProfilePoint[];
+  /** Cumulative time, distance, and fuel by altitude and temperature; takes precedence over `profile` */
+  profileTable?: ClimbProfileTable;
 }
 
 /** Complete performance data for a single aircraft type */

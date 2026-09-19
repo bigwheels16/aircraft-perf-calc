@@ -2,16 +2,28 @@ import { useState, useMemo, useEffect } from 'react';
 import fleetRaw from './data/fleet.json';
 import type { FleetData } from './engine/types';
 const fleetData: FleetData = fleetRaw as unknown as FleetData;
-import { calculateTable, calculateClimb } from './engine/performance';
+import { calculateTable, calculateClimb, EXTRAPOLATED_WARNING } from './engine/performance';
 import type { PerformanceInput, TableResult, ClimbPerformanceResult } from './engine/performance';
 import type { PerformanceTable } from './engine/types';
-import { DataTableViewer } from './components/DataTableViewer';
+import { NomogramViewer } from './components/NomogramViewer';
+import type { ChartTraceRequest } from './components/NomogramViewer';
+import nomogramMetaRaw from './data/nomogram_meta.json';
 import { loadSavedState, saveAppState } from './utils/storage';
 import './App.css';
 
+const nomogramMeta: Record<string, unknown> = nomogramMetaRaw;
+
 function App() {
+  // Checked here, before the calculator's hooks, so they always run in the same order
   if (Object.keys(fleetData).length === 0) return <div className="app-container"><div className="error-box">No aircraft data available</div></div>;
+  return <Calculator />;
+}
+
+function Calculator() {
   const [initialState] = useState(() => loadSavedState());
+
+  const [activeChart, setActiveChart] = useState<string | null>(null);
+  const [chartInputs, setChartInputs] = useState<{ traces: ChartTraceRequest[]; summary: string; resultText: string } | null>(null);
 
   const [aircraft, setAircraft] = useState<string>(initialState.aircraft);
   const [operation, setOperation] = useState<'takeoff' | 'climb' | 'landing'>(initialState.operation);
@@ -59,6 +71,14 @@ function App() {
     safetyBuffer,
   ]);
 
+  // Charts are keyed by figure number, e.g. 'POH Fig 5-37' -> 'fig_5_37_landing_flaps40_roll'
+  const getChartId = (figure?: string) => {
+    const match = figure?.match(/^POH Fig (\d+)-(\d+)$/);
+    if (!match) return null;
+    const prefix = `fig_${match[1]}_${match[2]}_`;
+    return Object.keys(nomogramMeta).find(cid => cid.startsWith(prefix)) ?? null;
+  };
+
   const aircraftData = useMemo(() => fleetData[aircraft] || Object.values(fleetData)[0], [aircraft]);
 
   // Compute active primary tables
@@ -95,9 +115,10 @@ function App() {
 
     let minProfileAlt = 0;
     let maxProfileAlt = 12000;
-    if (operation === 'climb' && aircraftData.climb.profile && aircraftData.climb.profile.length > 0) {
-      minProfileAlt = aircraftData.climb.profile[0].altitude;
-      maxProfileAlt = aircraftData.climb.profile[aircraftData.climb.profile.length - 1].altitude;
+    const profileAltitudes = aircraftData.climb.profileTable?.altitudes ?? aircraftData.climb.profile?.map(p => p.altitude);
+    if (operation === 'climb' && profileAltitudes && profileAltitudes.length > 0) {
+      minProfileAlt = profileAltitudes[0];
+      maxProfileAlt = profileAltitudes[profileAltitudes.length - 1];
     }
 
     return {
@@ -311,10 +332,15 @@ function App() {
     return false;
   }, [validationErrors, operationalWarnings, currentDensityAltitude, pressureAltitude]);
 
-  // Other operational warnings (excluding density altitude which is displayed above tabs)
+  // Other operational warnings, shown under the density altitude warning above the tabs;
+  // beyond-the-printed-chart warnings first
   const otherOperationalWarnings = useMemo(() => {
     if (validationErrors.length > 0) return [];
-    return operationalWarnings.filter((w) => !w.toLowerCase().includes('density altitude'));
+    const others = operationalWarnings.filter((w) => !w.toLowerCase().includes('density altitude'));
+    return [
+      ...others.filter((w) => w.startsWith(EXTRAPOLATED_WARNING)),
+      ...others.filter((w) => !w.startsWith(EXTRAPOLATED_WARNING)),
+    ];
   }, [validationErrors, operationalWarnings]);
 
   return (
@@ -669,6 +695,14 @@ function App() {
           </div>
         )}
 
+        {/* Other Operational Warnings Banner */}
+        {otherOperationalWarnings.map((warning, idx) => (
+          <div key={idx} className="warning-box">
+            <span>&#9888;</span>
+            <span>{warning}</span>
+          </div>
+        ))}
+
         {/* Operation Tabs (Take-Off / Climb / Landing) */}
         <div className="results-tabs-bar">
           <button
@@ -709,15 +743,6 @@ function App() {
           </div>
         )}
 
-        {/* Other Operational Warnings Banner */}
-        {otherOperationalWarnings.map((warning, idx) => (
-          <div key={idx} className="warning-box">
-            <span>&#9888;</span>
-            <span>{warning}</span>
-          </div>
-        ))}
-
-
         {/* ─── CLIMB OUTPUT CARDS ─── */}
         {operation === 'climb' && (
           <div className="perf-outputs-wrapper">
@@ -742,6 +767,18 @@ function App() {
                         <div className="distance-card-unit">FT / MIN</div>
                         {rocTable?.figure && (
                           <span className="distance-card-source">{rocTable.figure}</span>
+                        )}
+                        {getChartId(rocTable?.figure) && (
+                          <button 
+                            style={{marginTop: '8px', fontSize: '12px', padding: '4px 8px', cursor: 'pointer', backgroundColor: '#e2e8f0', border: 'none', borderRadius: '4px'}}
+                            onClick={() => {
+                              setActiveChart(getChartId(rocTable?.figure));
+                              setChartInputs({
+                                traces: [{ inputs: { oat: tempInC, altitude: pressureAltitude } }],
+                                summary: `${tempInC.toFixed(0)}°C · ${Math.round(pressureAltitude)} ft PA`,
+                                resultText: performance ? `${Math.round(performance.value)} ft/min` : 'No result for these inputs',
+                              });
+                            }}>View Chart 📊</button>
                         )}
                       </div>
 
@@ -857,6 +894,25 @@ function App() {
                       )}
                     </div>
                   </div>
+
+                  {getChartId(aircraftData.climb.timeDistanceFuelFigure) && !isNaN(pressureAltitude) && !isNaN(cruisePressureAltitude) && (
+                    <button
+                      style={{marginTop: '8px', fontSize: '12px', padding: '4px 8px', cursor: 'pointer', backgroundColor: '#e2e8f0', border: 'none', borderRadius: '4px'}}
+                      onClick={() => {
+                        setActiveChart(getChartId(aircraftData.climb.timeDistanceFuelFigure));
+                        // Read at departure and at cruise, both at the OAT input; the result is the difference
+                        setChartInputs({
+                          traces: [
+                            { label: `Departure ${Math.round(pressureAltitude).toLocaleString()} ft`, inputs: { oat: tempInC, altitude: pressureAltitude } },
+                            { label: `Cruise ${Math.round(cruisePressureAltitude).toLocaleString()} ft`, inputs: { oat: tempInC, altitude: cruisePressureAltitude } },
+                          ],
+                          summary: `${tempInC.toFixed(0)}°C · ${Math.round(pressureAltitude).toLocaleString()} → ${Math.round(cruisePressureAltitude).toLocaleString()} ft PA`,
+                          resultText: hasProfile
+                            ? `${performance.timeToClimbMinutes} min · ${performance.stillAirDistanceNm} NM (still air) · ${performance.fuelToClimbGallons} gal to climb`
+                            : 'No result for these inputs',
+                        });
+                      }}>View Chart 📊</button>
+                  )}
                 </div>
               );
             })()}
@@ -907,6 +963,21 @@ function App() {
                             </div>
                           )}
                           {tbl.figure && <span className="distance-card-source">{tbl.figure}</span>}
+                          {getChartId(tbl.figure) && (
+                            <button 
+                              style={{marginTop: '8px', fontSize: '12px', padding: '4px 8px', cursor: 'pointer', backgroundColor: '#e2e8f0', border: 'none', borderRadius: '4px'}}
+                              onClick={() => {
+                                const wind = isHeadwind ? windKnots : -windKnots;
+                                const windText = !wind ? '0 kt' : `${Math.abs(wind)} kt ${wind > 0 ? 'headwind' : 'tailwind'}`;
+                                setActiveChart(getChartId(tbl.figure));
+                                setChartInputs({
+                                  traces: [{ inputs: { oat: tempInC, altitude: pressureAltitude, weight, wind } }],
+                                  summary: `${tempInC.toFixed(0)}°C · ${Math.round(pressureAltitude)} ft PA · ${weight} lbs · ${windText}`,
+                                  // Before the safety buffer, so it compares like-for-like with the chart reading
+                                  resultText: result ? `${Math.round(result.baseValue)} ft` : 'No result for these inputs',
+                                });
+                              }}>View Chart 📊</button>
+                          )}
                         </div>
                       );
                     })}
@@ -916,14 +987,6 @@ function App() {
             })()}
           </div>
         )}
-
-        {/* DataTable Viewer */}
-        <DataTableViewer
-          tables={operationTables}
-          currentWeight={weight}
-          currentAltitude={isNaN(pressureAltitude) ? 0 : pressureAltitude}
-          currentTempC={tempInC}
-        />
       </div>
 
       <footer className="footer">
@@ -931,6 +994,13 @@ function App() {
           <strong>Disclaimer:</strong> This application is for demonstration and educational purposes only. Do not use for real-world flight planning. Always consult the official Pilot's Operating Handbook (POH) for your specific aircraft.
         </p>
       </footer>
+      {activeChart && chartInputs && (
+        <NomogramViewer 
+          chartId={activeChart} 
+          {...chartInputs} 
+          onClose={() => setActiveChart(null)} 
+        />
+      )}
     </div>
   );
 }
